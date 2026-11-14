@@ -1,6 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import pkg from '@prisma/client';
 import { createModuleLogger } from '../utils/logger.js';
 const logger = createModuleLogger('database');
+const PrismaClientConstructor = pkg.PrismaClient ?? pkg.default?.PrismaClient ?? pkg;
 let prisma;
 /**
  * Returns the singleton PrismaClient instance.
@@ -8,7 +9,7 @@ let prisma;
  */
 function getPrismaClient() {
     if (!prisma) {
-        prisma = new PrismaClient({
+        prisma = new PrismaClientConstructor({
             log: [
                 { level: 'error', emit: 'event' },
                 { level: 'warn', emit: 'event' },

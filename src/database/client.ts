@@ -1,17 +1,22 @@
-import { PrismaClient } from '@prisma/client';
+import pkg from '@prisma/client';
+import type { PrismaClient as PrismaClientType } from '@prisma/client';
 import { createModuleLogger } from '../utils/logger.js';
 
 const logger = createModuleLogger('database');
 
-let prisma: PrismaClient;
+// Resilient constructor supporting both CommonJS and ESM module loaders
+const PrismaClientConstructor =
+  (pkg as any).PrismaClient ?? (pkg as any).default?.PrismaClient ?? pkg;
+
+let prisma: PrismaClientType;
 
 /**
  * Returns the singleton PrismaClient instance.
  * Creates a new instance if one does not exist.
  */
-function getPrismaClient(): PrismaClient {
+function getPrismaClient(): PrismaClientType {
   if (!prisma) {
-    prisma = new PrismaClient({
+    prisma = new PrismaClientConstructor({
       log: [
         { level: 'error', emit: 'event' },
         { level: 'warn', emit: 'event' },
