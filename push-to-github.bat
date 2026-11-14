@@ -56,7 +56,7 @@ echo [3/5] Staging files (including pre-built dist/ and root index.js)...
 git add .
 
 echo [4/5] Creating commit...
-git commit -m "fix(deploy): add root index.js and compiled dist for Bot-Hosting.net compatibility" 2>nul
+git commit -m "perf: unlock full unconstrained resources for Coder 2GB plan (NVMe tuning, 1.5GB heap, deep memory)" 2>nul
 if %ERRORLEVEL% neq 0 (
     echo   (Working tree clean or commit already made)
 )

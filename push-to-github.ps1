@@ -43,7 +43,7 @@ Write-Host "[3/5] Staging files (including pre-built dist/ and root index.js)...
 git add .
 
 Write-Host "[4/5] Creating commit..." -ForegroundColor Yellow
-git commit -m "fix(deploy): add root index.js and compiled dist for Bot-Hosting.net compatibility"
+git commit -m "perf: unlock full unconstrained resources for Coder 2GB plan (NVMe tuning, 1.5GB heap, deep memory)"
 
 # 5. Push
 Write-Host "[5/5] Pushing to GitHub (origin main)..." -ForegroundColor Yellow

@@ -31,6 +31,16 @@ if (!fs.existsSync("./data")) {
   fs.mkdirSync("./data", { recursive: true });
 }
 
+// Ensure Prisma client binary is generated
+if (!fs.existsSync("./node_modules/.prisma/client/index.js")) {
+  console.log("⚡ [NEXUS AI] Generating Prisma client...");
+  try {
+    execSync("npx prisma generate", { stdio: "inherit" });
+  } catch (err) {
+    console.warn("⚠️ [NEXUS AI] Prisma generate warning:", err);
+  }
+}
+
 if (!fs.existsSync("./data/nexus.db")) {
   console.log("⚡ [NEXUS AI] Initializing database schema...");
   try {

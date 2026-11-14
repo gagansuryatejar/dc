@@ -15,7 +15,7 @@ export class MemoryService {
    * Retrieve recent conversation history for a specific user in a guild.
    * Strictly filtered by both guildId and userId to ensure privacy.
    */
-  async getHistory(guildId: string, userId: string, limit = 6): Promise<AIMessage[]> {
+  async getHistory(guildId: string, userId: string, limit = 20): Promise<AIMessage[]> {
     try {
       const records = await prisma.conversationMemory.findMany({
         where: { guildId, userId },
@@ -53,11 +53,11 @@ export class MemoryService {
         },
       });
 
-      // Keep maximum of 12 recent messages per user per guild to prevent memory bloat
+      // Keep maximum of 50 recent messages per user per guild (expanded for high-memory hosts)
       const excess = await prisma.conversationMemory.findMany({
         where: { guildId, userId },
         orderBy: { createdAt: "desc" },
-        skip: 12,
+        skip: 50,
         select: { id: true },
       });
 

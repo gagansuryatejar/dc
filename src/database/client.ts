@@ -1,12 +1,14 @@
-import pkg from '@prisma/client';
+import { createRequire } from 'node:module';
 import type { PrismaClient as PrismaClientType } from '@prisma/client';
 import { createModuleLogger } from '../utils/logger.js';
 
+const require = createRequire(import.meta.url);
+const prismaPkg = require('@prisma/client');
 const logger = createModuleLogger('database');
 
-// Resilient constructor supporting both CommonJS and ESM module loaders
+// Resilient constructor supporting CommonJS inside ESM via createRequire
 const PrismaClientConstructor =
-  (pkg as any).PrismaClient ?? (pkg as any).default?.PrismaClient ?? pkg;
+  prismaPkg.PrismaClient ?? prismaPkg.default?.PrismaClient ?? prismaPkg;
 
 let prisma: PrismaClientType;
 
@@ -46,6 +48,18 @@ async function connectDatabase(): Promise<void> {
     logger.info('Connecting to database...');
     await prisma.$connect();
     logger.info('Database connection established successfully');
+
+    // High-performance PRAGMAs for NVMe SSD & Dedicated RAM
+    try {
+      await prisma.$executeRawUnsafe('PRAGMA journal_mode = WAL;');
+      await prisma.$executeRawUnsafe('PRAGMA synchronous = NORMAL;');
+      await prisma.$executeRawUnsafe('PRAGMA cache_size = -64000;'); // 64MB dedicated cache
+      await prisma.$executeRawUnsafe('PRAGMA temp_store = MEMORY;');
+      await prisma.$executeRawUnsafe('PRAGMA mmap_size = 268435456;'); // 256MB memory mapped I/O
+      logger.info('SQLite performance PRAGMAs initialized (WAL mode, 64MB cache, memory temp store)');
+    } catch {
+      // Ignored if unsupported
+    }
   } catch (error) {
     logger.fatal({ error }, 'Failed to connect to database');
     throw error;

@@ -1,21 +1,21 @@
 /**
  * PM2 Ecosystem Configuration for NEXUS AI.
- * Tailored specifically for HP All-in-One Windows 10 Production Host (4GB RAM).
+ * Fully optimized for Unrestricted High-Performance Coder Plan (2GB RAM, 200% Dedicated vCPU, NVMe).
  */
 
 module.exports = {
   apps: [
     {
       name: "nexus-bot",
-      script: "./dist/index.js",
+      script: "./index.js",
       instances: 1,
       autorestart: true,
       watch: false,
-      node_args: "--max-old-space-size=350 --expose-gc",
-      // Aggressive memory guard for 4GB RAM host (restarts cleanly if exceeding 350MB)
-      max_memory_restart: "350M",
-      restart_delay: 4000,
-      max_restarts: 15,
+      node_args: "--max-old-space-size=1536",
+      // Unrestricted high-performance memory ceiling
+      max_memory_restart: "1600M",
+      restart_delay: 2000,
+      max_restarts: 30,
       min_uptime: "10s",
       env: {
         NODE_ENV: "production",
@@ -32,11 +32,10 @@ module.exports = {
       instances: 1,
       autorestart: true,
       watch: false,
-      node_args: "--max-old-space-size=100",
-      // Lightweight web dashboard process guard (keeps memory ≤ 100MB on 4GB host)
-      max_memory_restart: "100M",
-      restart_delay: 4000,
-      max_restarts: 15,
+      node_args: "--max-old-space-size=400",
+      max_memory_restart: "450M",
+      restart_delay: 2000,
+      max_restarts: 30,
       min_uptime: "10s",
       env: {
         NODE_ENV: "production",
