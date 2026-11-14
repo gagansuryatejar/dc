@@ -31,6 +31,7 @@
     "@noble/ciphers": "^2.4.0",
     "@prisma/client": "^6.0.0",
     "cron": "^3.1.9",
+    "discord-api-types": "^0.37.120",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
     "ms": "^2.1.3",

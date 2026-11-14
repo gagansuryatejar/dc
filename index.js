@@ -5,6 +5,16 @@
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 
+// Self-heal: ensure discord-api-types is installed if missing
+if (!fs.existsSync("./node_modules/discord-api-types")) {
+  console.log("⚡ [NEXUS AI] Installing discord-api-types...");
+  try {
+    execSync("npm install discord-api-types@0.37.120", { stdio: "inherit" });
+  } catch (err) {
+    console.warn("⚠️ [NEXUS AI] Dependency install warning:", err);
+  }
+}
+
 // If dist/index.js does not exist yet (e.g. fresh clone), build it automatically
 if (!fs.existsSync("./dist/index.js")) {
   console.log("⚡ [NEXUS AI] dist/index.js not found. Running prisma db push and build...");
@@ -16,9 +26,18 @@ if (!fs.existsSync("./dist/index.js")) {
   }
 }
 
-// Ensure database directory exists
+// Ensure database directory exists and schema is synced
 if (!fs.existsSync("./data")) {
   fs.mkdirSync("./data", { recursive: true });
+}
+
+if (!fs.existsSync("./data/nexus.db")) {
+  console.log("⚡ [NEXUS AI] Initializing database schema...");
+  try {
+    execSync("npx prisma db push", { stdio: "inherit" });
+  } catch (err) {
+    console.warn("⚠️ [NEXUS AI] Database initialization warning:", err);
+  }
 }
 
 // Load and start NEXUS AI
