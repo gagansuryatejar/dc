@@ -1,8 +1,8 @@
 # Dependencies
 node_modules/
 
-# Build output
-dist/
+# Build output (included for low-RAM hosts like Bot-Hosting so they don't have to compile)
+# dist/
 
 # Environment variables
 .env

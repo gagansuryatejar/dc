@@ -55,6 +55,12 @@ if [ ! -f "data/nexus.db" ]; then
     npx prisma db push
 fi
 
+# Build project if dist is missing
+if [ ! -d "dist" ]; then
+    echo "Compiled files not found. Building project..."
+    npm run build
+fi
+
 echo ""
 echo "🚀 Launching NEXUS AI Core in Android Lightweight Mode..."
 echo "Press Ctrl+C to terminate cleanly."

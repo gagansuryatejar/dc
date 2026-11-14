@@ -52,11 +52,11 @@ if not exist ".gitignore" (
 )
 
 :: 5. Stage files and commit
-echo [3/5] Staging files (excluding .env, node_modules, and database)...
+echo [3/5] Staging files (including pre-built dist/ and root index.js)...
 git add .
 
 echo [4/5] Creating commit...
-git commit -m "feat: NEXUS AI production release v1.1.0 with NEXUS HEART voice companion" 2>nul
+git commit -m "fix(deploy): add root index.js and compiled dist for Bot-Hosting.net compatibility" 2>nul
 if %ERRORLEVEL% neq 0 (
     echo   (Working tree clean or commit already made)
 )

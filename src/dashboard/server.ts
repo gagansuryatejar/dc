@@ -29,7 +29,12 @@ export class DashboardServer {
   private secret: string;
 
   constructor(options: DashboardServerOptions = {}) {
-    this.port = options.port ?? (Number(process.env.DASHBOARD_PORT) || config.dashboard.port || 3000);
+    this.port =
+      options.port ??
+      (Number(process.env.PORT) ||
+        Number(process.env.DASHBOARD_PORT) ||
+        config.dashboard.port ||
+        3000);
     this.host = options.host ?? (process.env.DASHBOARD_HOST || "0.0.0.0");
     this.secret =
       options.secret ??

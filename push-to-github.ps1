@@ -39,11 +39,11 @@ if ($hasOrigin) {
 }
 
 # 4. Stage & Commit
-Write-Host "[3/5] Staging files (respecting .gitignore)..." -ForegroundColor Yellow
+Write-Host "[3/5] Staging files (including pre-built dist/ and root index.js)..." -ForegroundColor Yellow
 git add .
 
 Write-Host "[4/5] Creating commit..." -ForegroundColor Yellow
-git commit -m "feat: NEXUS AI production release v1.1.0 with NEXUS HEART voice companion"
+git commit -m "fix(deploy): add root index.js and compiled dist for Bot-Hosting.net compatibility"
 
 # 5. Push
 Write-Host "[5/5] Pushing to GitHub (origin main)..." -ForegroundColor Yellow

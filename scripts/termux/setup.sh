@@ -28,10 +28,13 @@ mkdir -p data logs data/backups
 echo "[4/5] Installing project dependencies..."
 npm install
 
-# 5. Database setup
-echo "[5/5] Generating Prisma client and synchronizing SQLite..."
+# 5. Database setup & Build
+echo "[5/6] Generating Prisma client and synchronizing SQLite..."
 npx prisma generate
 npx prisma db push
+
+echo "[6/6] Compiling TypeScript project..."
+npm run build
 
 echo ""
 echo "===================================================="

@@ -1,0 +1,12 @@
+node_modules
+dist
+data
+logs
+*.log
+*.db
+.git
+.env
+.env.local
+.vscode
+.idea
+*.bat
