@@ -1,114 +1,80 @@
 /**
- * /intro slash command.
- * Set your public bio and introduce yourself to the community.
+ * NEXUS AI — /intro command
+ * Set and view member introduction/bio.
  */
 
 import {
   SlashCommandBuilder,
-  ChatInputCommandInteraction,
   EmbedBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
+  ChatInputCommandInteraction,
 } from "discord.js";
-import { ENGAGEMENT } from "../../../config/features.js";
-import { PermissionLevel, type NexusCommand } from "../../../types/index.js";
-import { Colors } from "../../../utils/embeds.js";
-import { FOOTER_TEXT, EMOJIS } from "../../../utils/constants.js";
-import { memberRepository, guildRepository } from "../../../database/index.js";
-import { achievementService } from "../services/achievement.service.js";
-import { sanitizeString } from "../../../security/validators.js";
+import { memberRepository } from "../../../database/index.js";
+import { FOOTER_TEXT } from "../../../utils/constants.js";
 
-export const introCommand: NexusCommand = {
-  data: new SlashCommandBuilder()
-    .setName("intro")
-    .setDescription("Set or update your community bio and introduce yourself to the server")
-    .addStringOption((opt) =>
-      opt
-        .setName("bio")
-        .setDescription("A brief description about yourself, your interests, or games you play")
-        .setMaxLength(500)
-        .setRequired(true),
-    )
-    .addBooleanOption((opt) =>
-      opt
-        .setName("share")
-        .setDescription("Share this introduction publicly in the welcome channel (defaults to true)")
-        .setRequired(false),
-    ),
+export const data = new SlashCommandBuilder()
+  .setName("intro")
+  .setDescription("Set or view member introduction")
+  .addSubcommand((sub) =>
+    sub.setName("set").setDescription("Set your introduction/bio")
+      .addStringOption((opt) => opt.setName("bio").setDescription("Your bio (max 500 chars)").setRequired(true).setMaxLength(500)),
+  )
+  .addSubcommand((sub) =>
+    sub.setName("view").setDescription("View your or another member's intro")
+      .addUserOption((opt) => opt.setName("user").setDescription("Member to view")),
+  )
+  .addSubcommand((sub) =>
+    sub.setName("remove").setDescription("Remove your introduction"),
+  );
 
-  module: ENGAGEMENT,
-  permissions: PermissionLevel.MEMBER,
-  cooldownMs: 5000,
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const subcommand = interaction.options.getSubcommand();
 
-  async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const guildId = interaction.guildId;
-    if (!guildId) return;
+  const member = await memberRepository.findOrCreate({ guildId, userId, username: interaction.user.username });
 
-    const bioRaw = interaction.options.getString("bio", true);
-    const shouldShare = interaction.options.getBoolean("share") ?? true;
-    const bio = sanitizeString(bioRaw, 500);
+  if (subcommand === "set") {
+    const bio = interaction.options.getString("bio", true);
 
-    const member = await memberRepository.findOrCreate(
-      guildId,
-      interaction.user.id,
-      interaction.user.username,
-    );
+    await memberRepository.update(guildId, userId, { bio });
 
-    // Evaluate badges
-    const { updatedBadges } = achievementService.evaluateBadges(member.badges, {
-      messageCount: member.messageCount,
-      level: member.level,
-      dailyStreak: member.dailyStreak,
-      reputation: member.reputation,
-      voiceMinutes: member.voiceMinutes,
-      hasBirthday: Boolean(member.birthday),
-      hasBio: true,
-    });
+    const embed = new EmbedBuilder()
+      .setTitle("📝 Introduction Updated!")
+      .setDescription(bio)
+      .setColor(0x5865f2)
+      .setFooter({ text: FOOTER_TEXT });
 
-    await memberRepository.update(guildId, interaction.user.id, {
-      bio,
-      badges: JSON.stringify(updatedBadges),
-    });
+    await interaction.reply({ embeds: [embed] });
+    return;
+  }
 
-    await interaction.reply({
-      content: "✅ Your community profile bio has been updated successfully!",
-      ephemeral: true,
-    });
+  if (subcommand === "view") {
+    const targetUser = interaction.options.getUser("user") || interaction.user;
+    const targetMember = await memberRepository.findOrCreate({ guildId, userId: targetUser.id, username: targetUser.username });
 
-    if (shouldShare) {
-      const guildData = await guildRepository.findById(guildId);
-      const targetChannelId = guildData?.welcomeChannel || interaction.channelId;
-      const targetChannel = interaction.guild?.channels.cache.get(targetChannelId);
-
-      if (targetChannel && targetChannel.isTextBased()) {
-        const joinedTs =
-          interaction.member && "joinedTimestamp" in interaction.member && interaction.member.joinedTimestamp
-            ? interaction.member.joinedTimestamp
-            : Date.now();
-
-        const introEmbed = new EmbedBuilder()
-          .setColor(Colors.PRIMARY)
-          .setTitle(`${EMOJIS.WAVE} Community Introduction: ${interaction.user.username}`)
-          .setDescription(bio)
-          .setThumbnail(interaction.user.displayAvatarURL({ size: 256 }))
-          .addFields({
-            name: "Member Info",
-            value: `👤 User: <@${interaction.user.id}>\n📅 Joined: <t:${Math.floor(joinedTs / 1000)}:R>`,
-            inline: false,
-          })
-          .setFooter({ text: FOOTER_TEXT })
-          .setTimestamp();
-
-        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`welcome_wave:${interaction.user.id}`)
-            .setLabel("Say Hello! 👋")
-            .setStyle(ButtonStyle.Primary),
-        );
-
-        await targetChannel.send({ embeds: [introEmbed], components: [row] });
-      }
+    if (!targetMember.bio) {
+      await interaction.reply({ content: `${targetUser.username} hasn't set an introduction yet.`, flags: 64 });
+      return;
     }
-  },
-};
+
+    const embed = new EmbedBuilder()
+      .setTitle(`${targetUser.username}'s Introduction`)
+      .setThumbnail(targetUser.displayAvatarURL({ size: 128 }))
+      .setDescription(targetMember.bio)
+      .setColor(0x5865f2)
+      .setFooter({ text: FOOTER_TEXT });
+
+    await interaction.reply({ embeds: [embed] });
+    return;
+  }
+
+  if (subcommand === "remove") {
+    if (!member.bio) {
+      await interaction.reply({ content: "You don't have an introduction set.", flags: 64 });
+      return;
+    }
+
+    await memberRepository.update(guildId, userId, { bio: null });
+    await interaction.reply({ content: "Your introduction has been removed.", flags: 64 });
+  }
+}

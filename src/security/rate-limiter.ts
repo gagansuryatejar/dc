@@ -1,6 +1,6 @@
 /**
- * In-memory rate limiter with automated memory cleanup for NEXUS AI.
- * Essential for resource-constrained hosts (e.g. 4GB RAM HP All-in-One & Android).
+ * NEXUS AI — In-Memory Sliding-Window Rate Limiter
+ * Prevents command spam and duplicate processing. Memory-bounded with periodic GC.
  */
 
 export interface RateLimitResult {
@@ -56,9 +56,7 @@ export class RateLimiter {
     };
   }
 
-  /**
-   * Check if a key is currently rate limited without consuming a point.
-   */
+  /** Check if a key is currently rate limited without consuming a point. */
   isLimited(key: string): boolean {
     const now = Date.now();
     const timestamps = this.windows.get(key);
@@ -67,16 +65,12 @@ export class RateLimiter {
     return valid.length >= this.maxRequests;
   }
 
-  /**
-   * Reset rate limit state for a key.
-   */
+  /** Reset rate limit state for a key. */
   reset(key: string): void {
     this.windows.delete(key);
   }
 
-  /**
-   * Cleanup expired entries to free RAM.
-   */
+  /** Cleanup expired entries to free RAM. */
   cleanup(): void {
     const now = Date.now();
     for (const [key, timestamps] of this.windows.entries()) {
@@ -89,9 +83,7 @@ export class RateLimiter {
     }
   }
 
-  /**
-   * Destroy the cleanup interval.
-   */
+  /** Destroy the cleanup interval and clear all state. */
   destroy(): void {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);

@@ -1,127 +1,172 @@
 /**
- * /poll slash command.
- * Interactive community polls with live button voting and visual tally bars.
+ * NEXUS AI — /poll command
+ * Create and manage polls with multiple options.
  */
 
 import {
   SlashCommandBuilder,
-  ChatInputCommandInteraction,
   EmbedBuilder,
+  ChatInputCommandInteraction,
   ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
+  StringSelectMenuBuilder,
 } from "discord.js";
-import { ENGAGEMENT } from "../../../config/features.js";
-import { PermissionLevel, type NexusCommand } from "../../../types/index.js";
-import { Colors } from "../../../utils/embeds.js";
-import { FOOTER_TEXT } from "../../../utils/constants.js";
-import { pollRepository } from "../repositories/poll.repository.js";
-import { sanitizeString } from "../../../security/validators.js";
+import * as pollRepo from "../repositories/poll.repository.js";
 
-const OPTION_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"];
+export const data = new SlashCommandBuilder()
+  .setName("poll")
+  .setDescription("Create and manage polls")
+  .addSubcommand((sub) =>
+    sub.setName("create").setDescription("Create a new poll")
+      .addStringOption((opt) => opt.setName("question").setDescription("Poll question").setRequired(true).setMaxLength(200))
+      .addStringOption((opt) => opt.setName("options").setDescription("Comma-separated options (2-10)").setRequired(true))
+      .addBooleanOption((opt) => opt.setName("multiple").setDescription("Allow multiple votes per user").setRequired(false))
+      .addIntegerOption((opt) => opt.setName("duration").setDescription("Duration in minutes (default: no expiry)").setMinValue(1).setMaxValue(10080)),
+  )
+  .addSubcommand((sub) =>
+    sub.setName("vote").setDescription("Vote on a poll")
+      .addStringOption((opt) => opt.setName("id").setDescription("Poll ID").setRequired(true))
+      .addIntegerOption((opt) => opt.setName("option").setDescription("Option index (0-based)").setRequired(true).setMinValue(0)),
+  )
+  .addSubcommand((sub) =>
+    sub.setName("results").setDescription("View poll results")
+      .addStringOption((opt) => opt.setName("id").setDescription("Poll ID").setRequired(true)),
+  )
+  .addSubcommand((sub) =>
+    sub.setName("close").setDescription("Close a poll (creator only)")
+      .addStringOption((opt) => opt.setName("id").setDescription("Poll ID").setRequired(true)),
+  );
 
-export const pollCommand: NexusCommand = {
-  data: new SlashCommandBuilder()
-    .setName("poll")
-    .setDescription("Create interactive community polls with live voting")
-    .addSubcommand((sub) =>
-      sub
-        .setName("create")
-        .setDescription("Launch a new community poll")
-        .addStringOption((opt) =>
-          opt
-            .setName("question")
-            .setDescription("The poll question")
-            .setMaxLength(250)
-            .setRequired(true),
-        )
-        .addStringOption((opt) =>
-          opt
-            .setName("option1")
-            .setDescription("First choice")
-            .setMaxLength(100)
-            .setRequired(true),
-        )
-        .addStringOption((opt) =>
-          opt
-            .setName("option2")
-            .setDescription("Second choice")
-            .setMaxLength(100)
-            .setRequired(true),
-        )
-        .addStringOption((opt) =>
-          opt
-            .setName("option3")
-            .setDescription("Third choice (optional)")
-            .setMaxLength(100)
-            .setRequired(false),
-        )
-        .addStringOption((opt) =>
-          opt
-            .setName("option4")
-            .setDescription("Fourth choice (optional)")
-            .setMaxLength(100)
-            .setRequired(false),
-        ),
-    ),
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const channelId = interaction.channelId!;
+  const subcommand = interaction.options.getSubcommand();
 
-  module: ENGAGEMENT,
-  permissions: PermissionLevel.MEMBER,
-  cooldownMs: 5000,
+  if (subcommand === "create") {
+    const question = interaction.options.getString("question", true);
+    const optionsStr = interaction.options.getString("options", true);
+    const allowMultiple = interaction.options.getBoolean("multiple") || false;
+    const duration = interaction.options.getInteger("duration");
 
-  async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const guildId = interaction.guildId;
-    if (!guildId) return;
+    const options = optionsStr.split(",").map((o) => o.trim()).filter((o) => o.length > 0);
 
-    const question = sanitizeString(interaction.options.getString("question", true), 250);
-    const opt1 = sanitizeString(interaction.options.getString("option1", true), 100);
-    const opt2 = sanitizeString(interaction.options.getString("option2", true), 100);
-    const opt3 = interaction.options.getString("option3");
-    const opt4 = interaction.options.getString("option4");
+    if (options.length < 2 || options.length > 10) {
+      await interaction.reply({ content: "Please provide 2-10 options separated by commas.", flags: 64 });
+      return;
+    }
 
-    const options = [opt1, opt2];
-    if (opt3) options.push(sanitizeString(opt3, 100));
-    if (opt4) options.push(sanitizeString(opt4, 100));
+    const expiresAt = duration ? new Date(Date.now() + duration * 60000) : undefined;
 
-    const poll = await pollRepository.create({
+    const poll = await pollRepo.create({
       guildId,
-      creatorId: interaction.user.id,
-      channelId: interaction.channelId,
+      creatorId: userId,
+      channelId,
       question,
       options,
+      allowMultiple,
+      expiresAt,
     });
 
-    const optionLines = options.map(
-      (opt, idx) => `${OPTION_EMOJIS[idx]} **${opt}**\n\`[░░░░░░░░░░]\` **0%** (0 votes)`,
+    const embed = buildPollEmbed(poll.question, [], 0, allowMultiple, options);
+    const row = buildPollSelectMenu(poll.id, options, allowMultiple);
+
+    const reply = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
+    await pollRepo.setMessageId(poll.id, reply.id);
+
+    return;
+  }
+
+  if (subcommand === "vote") {
+    const pollId = interaction.options.getString("id", true);
+    const optionIndex = interaction.options.getInteger("option", true);
+
+    try {
+      const updatedPoll = await pollRepo.recordVote(pollId, userId, optionIndex);
+      const options = typeof updatedPoll.options === "string" ? JSON.parse(updatedPoll.options) : updatedPoll.options;
+      const embed = buildPollEmbed(
+        updatedPoll.question,
+        updatedPoll.tally,
+        updatedPoll.totalVotes,
+        updatedPoll.allowMultiple,
+        options,
+      );
+      await interaction.reply({ embeds: [embed], flags: 64 });
+    } catch (err) {
+      await interaction.reply({ content: `Error: ${err instanceof Error ? err.message : "Failed to vote"}`, flags: 64 });
+    }
+    return;
+  }
+
+  if (subcommand === "results") {
+    const pollId = interaction.options.getString("id", true);
+    const poll = await pollRepo.findById(pollId);
+
+    if (!poll) {
+      await interaction.reply({ content: "Poll not found.", flags: 64 });
+      return;
+    }
+
+    const options = typeof poll.options === "string" ? JSON.parse(poll.options) : poll.options;
+    const tally = new Array(options.length).fill(0);
+    const embed = buildPollEmbed(poll.question, tally, 0, poll.allowMultiple, options);
+    await interaction.reply({ embeds: [embed], flags: 64 });
+    return;
+  }
+
+  if (subcommand === "close") {
+    const pollId = interaction.options.getString("id", true);
+    const poll = await pollRepo.findById(pollId);
+
+    if (!poll) {
+      await interaction.reply({ content: "Poll not found.", flags: 64 });
+      return;
+    }
+
+    if (poll.creatorId !== userId) {
+      await interaction.reply({ content: "Only the poll creator can close it.", flags: 64 });
+      return;
+    }
+
+    await pollRepo.closePoll(pollId);
+    await interaction.reply({ content: "Poll closed.", flags: 64 });
+  }
+}
+
+function buildPollEmbed(question: string, tally: number[], totalVotes: number, allowMultiple: boolean, options: string[]): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 ${question}`)
+    .setColor(0x5865f2)
+    .setFooter({ text: `Poll ID: ${options.length > 0 ? "" : ""}` });
+
+  const optionLines = options.map((opt: string, i: number) => {
+    const count = tally[i] || 0;
+    const percent = totalVotes > 0 ? ((count / totalVotes) * 100).toFixed(1) : "0.0";
+    const bar = "█".repeat(Math.round((count / (totalVotes || 1)) * 10));
+    return `${i + 1}. ${opt} — ${count} votes (${percent}%) ${bar}`;
+  });
+
+  embed.setDescription(optionLines.join("\n"));
+  embed.addFields(
+    { name: "Total Votes", value: totalVotes.toString(), inline: true },
+    { name: "Mode", value: allowMultiple ? "Multiple Choice" : "Single Choice", inline: true },
+  );
+
+  return embed;
+}
+
+function buildPollSelectMenu(pollId: string, options: string[], allowMultiple: boolean): ActionRowBuilder<StringSelectMenuBuilder> {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`poll_vote_${pollId}`)
+    .setPlaceholder("Select an option to vote")
+    .setMinValues(1)
+    .setMaxValues(allowMultiple ? options.length : 1)
+    .addOptions(
+      options.map((opt, i) => ({
+        label: opt.slice(0, 100),
+        value: i.toString(),
+        description: `Option ${i + 1}`,
+      })),
     );
 
-    const embed = new EmbedBuilder()
-      .setColor(Colors.PRIMARY)
-      .setTitle(`📊 Community Poll: ${question}`)
-      .setDescription(optionLines.join("\n\n"))
-      .addFields({
-        name: "Poll Metadata",
-        value: `👤 Created by <@${interaction.user.id}> • Total Votes: **0**`,
-      })
-      .setFooter({ text: FOOTER_TEXT })
-      .setTimestamp();
-
-    const buttons = options.map((opt, idx) =>
-      new ButtonBuilder()
-        .setCustomId(`poll_vote:${poll.id}:${idx}`)
-        .setEmoji(OPTION_EMOJIS[idx]!)
-        .setLabel(opt.slice(0, 20))
-        .setStyle(ButtonStyle.Primary),
-    );
-
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(buttons);
-
-    const replyMsg = await interaction.reply({
-      embeds: [embed],
-      components: [row],
-      fetchReply: true,
-    });
-
-    await pollRepository.update(poll.id, { messageId: replyMsg.id });
-  },
-};
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+}

@@ -1,13 +1,15 @@
 /**
- * Input sanitization and validation utilities for NEXUS AI.
+ * NEXUS AI — Input Sanitization & Validation Utilities
+ * Enterprise-grade input validation to prevent injection, XSS, and abuse.
  */
+
+import { config } from "../config/index.js";
 
 /**
  * Strips non-printable ASCII control characters and enforces character limits.
  */
 export function sanitizeString(input: string, maxLength = 2000): string {
   if (typeof input !== "string") return "";
-  // Strip control characters except newline and tab
   const sanitized = input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
   return sanitized.slice(0, maxLength);
 }
@@ -15,7 +17,7 @@ export function sanitizeString(input: string, maxLength = 2000): string {
 /**
  * Validates whether a string matches Discord Snowflake ID format (17 to 20 digits).
  */
-export function validateSnowflake(id: string): boolean {
+export function validateSnowflake(id: unknown): id is string {
   if (typeof id !== "string") return false;
   return /^\d{17,20}$/.test(id);
 }
@@ -63,4 +65,28 @@ export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
  */
 export function validateLocale(locale: string): locale is SupportedLocale {
   return SUPPORTED_LOCALES.includes(locale as SupportedLocale);
+}
+
+/**
+ * Validates a Discord role name length and content.
+ */
+export function validateRoleName(name: string): boolean {
+  if (!name || typeof name !== "string") return false;
+  const trimmed = name.trim();
+  return trimmed.length >= 1 && trimmed.length <= 100;
+}
+
+/**
+ * Sanitizes a reason string for moderation actions.
+ */
+export function sanitizeReason(reason: string, maxLength = 512): string {
+  return sanitizeString(reason, maxLength);
+}
+
+/**
+ * Returns true if the provided guild ID matches the configured dev guild (if set).
+ */
+export function isDevGuild(guildId: string | null): boolean {
+  if (!guildId || !config.discord.guildId) return false;
+  return guildId === config.discord.guildId;
 }

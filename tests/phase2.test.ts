@@ -5,6 +5,7 @@
  */
 
 import "dotenv/config";
+import { config } from "../src/config/index.js";
 import { connectDatabase, disconnectDatabase, memberRepository, prisma } from "../src/database/index.js";
 import { levelService } from "../src/modules/engagement/services/level.service.js";
 import { streakService } from "../src/modules/engagement/services/streak.service.js";
@@ -115,10 +116,28 @@ async function runSuite(): Promise<void> {
 
   // ── 5. Database Repositories (Suggestions & Polls) ───────
   console.log("\n5. Testing Engagement Repositories:");
-  await connectDatabase();
 
-  const testGuildId = "888777666555444333";
-  const testUserId = "222333444555666777";
+  // Check if PostgreSQL is available
+  const isPostgres =
+    typeof config.database.url === "string" &&
+    (config.database.url.startsWith("postgresql://") ||
+      config.database.url.startsWith("postgres://"));
+
+  if (!isPostgres) {
+    console.log(
+      "  ⚠ [SKIP] Database repository tests require a PostgreSQL DATABASE_URL.",
+    );
+    console.log(
+      "     Set DATABASE_URL to a postgresql:// connection string, start PostgreSQL,",
+    );
+    console.log(
+      "     run `npm run db:push`, then re-run: npx tsx tests/phase2.test.ts",
+    );
+  } else {
+    await connectDatabase();
+
+    const testGuildId = "888777666555444333";
+    const testUserId = "222333444555666777";
 
   // Create test guild record
   await prisma.guild.upsert({
@@ -170,20 +189,21 @@ async function runSuite(): Promise<void> {
     bio: "Passionate gamer and builder.",
   });
   const updatedM = await memberRepository.findByGuildAndUser(testGuildId, testUserId);
-  assert(updatedM?.dailyStreak === 3 && updatedM?.reputation === 5 && updatedM?.birthday === "08-15", "Member engagement fields updated");
+      assert(updatedM?.dailyStreak === 3 && updatedM?.reputation === 5 && updatedM?.birthday === "08-15", "Member engagement fields updated");
 
-  // ── 6. Engagement Module Structure ───────────────────────
-  console.log("\n6. Testing Engagement Module Definition:");
-  assert(engagementModule.name === "engagement", "Module name is 'engagement'");
-  assert(engagementModule.commands.length === 11, `Module exports 11 slash commands (found ${engagementModule.commands.length})`);
-  assert(engagementModule.events.length === 2, "Module exports 2 events (guildMemberAdd, messageCreate)");
+      // ── 6. Engagement Module Structure ───────────────────────
+      console.log("\n6. Testing Engagement Module Definition:");
+      assert(engagementModule.name === "engagement", "Module name is 'engagement'");
+      assert(engagementModule.commands.length === 11, `Module exports 11 slash commands (found ${engagementModule.commands.length})`);
+      assert(engagementModule.events.length === 2, "Module exports 2 events (guildMemberAdd, messageCreate)");
 
-  const health = await engagementModule.healthCheck();
-  assert(health.status === "healthy", "Engagement module health check passed");
+      const health = await engagementModule.healthCheck();
+      assert(health.status === "healthy", "Engagement module health check passed");
 
-  await disconnectDatabase();
+      await disconnectDatabase();
+    }
 
-  // ── Summary ──────────────────────────────────────────────
+    // ── Summary ──────────────────────────────────────────────
   console.log("\n====================================================");
   console.log(`Phase 2 Tests Finished: ${passedTests} passed, ${failedTests} failed.`);
   console.log("====================================================\n");

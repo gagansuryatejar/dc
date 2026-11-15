@@ -1,73 +1,74 @@
+// ==================================================================
+// NEXUS AI — Prisma Schema (PostgreSQL)
+// Provider: postgresql
+// ==================================================================
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Core — Phase 1
+// ─────────────────────────────────────────────────────────────────────
+
 model Guild {
-  id                  String               @id
-  name                String
-  ownerId             String
-  prefix              String               @default("!")
-  locale              String               @default("en")
-  timezone            String               @default("UTC")
-  welcomeChannel      String?
-  logChannel          String?
+  id            String   @id        // Discord guild ID (snowflake)
+  name          String
+  ownerId       String
+  locale        String   @default("en")
+  timezone      String   @default("UTC")
+  welcomeChannel String?
+  logChannel    String?
   announcementChannel String?
-  features            String               @default("{}")
-  settings            String               @default("{}")
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
+  features      String   @default("{}") // JSON — per-guild feature flags
+  settings      String   @default("{}") // JSON — per-guild settings
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
   members             GuildMember[]
   moduleConfigs       ModuleConfig[]
   auditLogs           AuditLog[]
   suggestions         Suggestion[]
   polls               Poll[]
-  tempVoiceChannels   TempVoiceChannel[]
-  memories            ConversationMemory[]
-  facts               CommunityFact[]
   infractions         Infraction[]
   tickets             SupportTicket[]
-  filterRules         FilterRule[]
-  streamerProfiles    StreamerProfile[]
-  watchParties        WatchParty[]
-  dailyMetrics        DailyMetric[]
-  serverLores         ServerLore[]
-  gameSessions        GameSession[]
+
+  @@index([ownerId])
 }
 
 model GuildMember {
-  id            String    @id @default(cuid())
-  guildId       String
-  userId        String
-  username      String
-  displayName   String?
-  joinedAt      DateTime  @default(now())
-  lastActive    DateTime  @default(now())
-  xp            Int       @default(0)
-  level         Int       @default(0)
-  voiceMinutes  Int       @default(0)
-  messageCount  Int       @default(0)
-  coins         Int       @default(0)
-  reputation    Int       @default(0)
-  dailyStreak   Int       @default(0)
-  lastDaily     DateTime?
-  lastRepGiven  DateTime?
-  birthday      String?   // MM-DD format
-  bio           String?
-  badges        String    @default("[]") // JSON array of string IDs
-  preferences   String    @default("{}")
-  consentFlags  String    @default("{}")
-  warnings      Int       @default(0)
-  isMuted       Boolean   @default(false)
-  isBanned      Boolean   @default(false)
-  streamerMode  Boolean   @default(false)
-  guild         Guild     @relation(fields: [guildId], references: [id], onDelete: Cascade)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id           String   @id @default(cuid())
+  guildId      String
+  userId       String   // Discord user ID (snowflake)
+  username     String
+  displayName  String?
+  timezone     String   @default("UTC")
+  joinedAt     DateTime @default(now())
+  lastActive   DateTime @default(now())
+  xp           Int      @default(0)
+  level        Int      @default(0)
+  voiceMinutes Int      @default(0)
+  messageCount Int      @default(0)
+  coins        Int      @default(0)
+  reputation   Int      @default(0)
+  dailyStreak  Int      @default(0)
+  lastDaily    DateTime?
+  lastRepGiven DateTime?
+  birthday     String?  // MM-DD format
+  bio          String?
+  badges       String   @default("[]")   // JSON array of badge IDs
+  preferences  String   @default("{}")   // JSON — notification & interaction prefs
+  consentFlags String   @default("{}")   // JSON — voice/data consent flags
+  warnings     Int      @default(0)
+  isMuted      Boolean  @default(false)
+  isBanned     Boolean  @default(false)
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
 
   @@unique([guildId, userId])
   @@index([userId])
@@ -81,14 +82,16 @@ model GuildMember {
 model ModuleConfig {
   id        String   @id @default(cuid())
   guildId   String
-  module    String
+  module    String   // e.g. "voice", "ai", "moderation", "engagement"
   enabled   Boolean  @default(true)
-  settings  String   @default("{}")
-  guild     Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  settings  String   @default("{}") // JSON — module-specific settings
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
   @@unique([guildId, module])
+  @@index([guildId, enabled])
 }
 
 model AuditLog {
@@ -97,16 +100,23 @@ model AuditLog {
   userId    String?
   action    String
   target    String?
-  details   String?
+  details   String?    // JSON string
   module    String?
-  severity  String   @default("info")
-  guild     Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  severity  String   @default("info") // info | warn | error | critical
   createdAt DateTime @default(now())
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
 
   @@index([guildId, createdAt])
   @@index([guildId, action])
   @@index([guildId, userId])
+  @@index([guildId, severity])
 }
+
+// ==================================================================
+// Additional models reserved for later phases (placeholders, unused in Phase 1)
+// These keep the schema forward-compatible and are created on db:push.
+// ==================================================================
 
 model Suggestion {
   id        String   @id @default(cuid())
@@ -116,10 +126,9 @@ model Suggestion {
   channelId String?
   messageId String?
   content   String
-  status    String   @default("pending") // pending, approved, rejected, implemented
-  upvotes   String   @default("[]")      // JSON array of userIds
-  downvotes String   @default("[]")      // JSON array of userIds
+  status    String   @default("pending")
   guild     Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  votes     SuggestionVote[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -127,225 +136,91 @@ model Suggestion {
   @@index([guildId, userId])
 }
 
+model SuggestionVote {
+  id          String   @id @default(cuid())
+  suggestionId String
+  userId      String
+  voteType    String   // "upvote" | "downvote"
+  createdAt   DateTime @default(now())
+
+  suggestion Suggestion @relation(fields: [suggestionId], references: [id], onDelete: Cascade)
+
+  @@unique([suggestionId, userId])
+  @@index([suggestionId])
+  @@index([userId])
+}
+
 model Poll {
-  id        String    @id @default(cuid())
-  guildId   String
-  creatorId String
-  channelId String
-  messageId String?
-  question  String
-  options   String    // JSON array of string options
-  votes     String    @default("{}") // JSON map: userId -> optionIndex
-  expiresAt DateTime?
-  isClosed  Boolean   @default(false)
-  guild     Guild     @relation(fields: [guildId], references: [id], onDelete: Cascade)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id          String   @id @default(cuid())
+  guildId     String
+  creatorId   String
+  channelId   String
+  messageId   String?
+  question    String
+  options     String   // JSON array
+  allowMultiple Boolean @default(false)
+  expiresAt   DateTime?
+  isActive    Boolean  @default(true)
+  guild       Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  votes       PollVote[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  @@index([guildId, isClosed])
+  @@index([guildId, isActive])
+  @@index([guildId, creatorId])
 }
 
-model TempVoiceChannel {
-  id        String   @id // Discord Voice Channel ID
-  guildId   String
-  ownerId   String
-  name      String
-  isPrivate Boolean  @default(false)
-  userLimit Int      @default(0)
-  createdAt DateTime @default(now())
-  guild     Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+model PollVote {
+  id         String   @id @default(cuid())
+  pollId     String
+  userId     String
+  optionIndex Int
+  createdAt  DateTime @default(now())
 
-  @@index([guildId])
-}
+  poll Poll @relation(fields: [pollId], references: [id], onDelete: Cascade)
 
-model ConversationMemory {
-  id        String   @id @default(cuid())
-  guildId   String
-  userId    String
-  role      String   // "user" | "assistant" | "system"
-  content   String
-  createdAt DateTime @default(now())
-  guild     Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
-
-  @@index([guildId, userId, createdAt])
-}
-
-model CommunityFact {
-  id        String   @id @default(cuid())
-  guildId   String
-  key       String
-  content   String
-  creatorId String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  guild     Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
-
-  @@unique([guildId, key])
-  @@index([guildId])
+  @@unique([pollId, userId, optionIndex])
+  @@index([pollId])
+  @@index([userId])
 }
 
 model Infraction {
-  id              String    @id @default(cuid())
+  id              String   @id @default(cuid())
   guildId         String
   userId          String
   moderatorId     String
-  type            String    // "warn" | "timeout" | "mute" | "kick" | "ban"
+  type            String   // warn | timeout | mute | kick | ban
   reason          String
   durationMinutes Int?
   expiresAt       DateTime?
-  active          Boolean   @default(true)
-  createdAt       DateTime  @default(now())
-  guild           Guild     @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
 
   @@index([guildId, userId])
   @@index([guildId, active])
 }
 
 model SupportTicket {
-  id              String    @id @default(cuid())
+  id              String   @id @default(cuid())
   ticketNumber    Int
   guildId         String
-  channelId       String?   // Discord text channel ID
+  channelId       String?
   creatorId       String
   creatorUsername String
   subject         String
-  category        String    @default("general") // "general" | "appeal" | "report" | "billing"
-  status          String    @default("open")    // "open" | "in_progress" | "closed"
+  category        String   @default("general")
+  status          String   @default("open")
   closedBy        String?
   closedAt        DateTime?
-  closeReason     String?
   transcript      String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  guild           Guild     @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  guild Guild @relation(fields: [guildId], references: [id], onDelete: Cascade)
 
   @@unique([guildId, ticketNumber])
   @@index([guildId, status])
   @@index([guildId, creatorId])
-}
-
-model FilterRule {
-  id        String   @id @default(cuid())
-  guildId   String
-  pattern   String
-  isRegex   Boolean  @default(false)
-  action    String   @default("delete_warn") // "delete" | "warn" | "delete_warn" | "timeout"
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now())
-  guild     Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
-
-  @@unique([guildId, pattern])
-  @@index([guildId, enabled])
-}
-
-model StreamerProfile {
-  id                 String    @id @default(cuid())
-  guildId            String
-  userId             String
-  platform           String?   // "twitch" | "youtube" | "kick" | "discord"
-  channelUrl         String?
-  bio                String?
-  notifyGoLive       Boolean   @default(true) // Streamer privacy & notification preference
-  liveRole           String?   // Optional role ID given while live
-  customMessage      String?
-  totalStreams       Int       @default(0)
-  totalStreamMinutes Int       @default(0)
-  lastStreamAt       DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-  guild              Guild     @relation(fields: [guildId], references: [id], onDelete: Cascade)
-
-  @@unique([guildId, userId])
-  @@index([guildId, totalStreamMinutes])
-}
-
-model WatchParty {
-  id             String    @id @default(cuid())
-  guildId        String
-  hostId         String
-  title          String
-  description    String?
-  streamUrl      String
-  voiceChannelId String?
-  scheduledFor   DateTime
-  status         String    @default("scheduled") // "scheduled" | "live" | "ended" | "cancelled"
-  rsvpUsers      String    @default("[]")        // JSON array of userIds
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  guild          Guild     @relation(fields: [guildId], references: [id], onDelete: Cascade)
-
-  @@index([guildId, status])
-  @@index([guildId, scheduledFor])
-}
-
-model DailyMetric {
-  id             String    @id @default(cuid())
-  guildId        String
-  date           String    // "YYYY-MM-DD"
-  messageCount   Int       @default(0)
-  voiceMinutes   Int       @default(0)
-  activeMembers  Int       @default(0)
-  joins          Int       @default(0)
-  leaves         Int       @default(0)
-  infractions    Int       @default(0)
-  ticketsOpened  Int       @default(0)
-  ticketsClosed  Int       @default(0)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  guild          Guild     @relation(fields: [guildId], references: [id], onDelete: Cascade)
-
-  @@unique([guildId, date])
-  @@index([guildId, date])
-}
-
-model ServerLore {
-  id           String   @id @default(cuid())
-  guildId      String
-  topic        String
-  content      String
-  submittedBy  String
-  submitterTag String?
-  category     String   @default("lore") // "lore" | "quote" | "milestone" | "inside_joke"
-  upvotes      Int      @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  guild        Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
-
-  @@index([guildId, topic])
-  @@index([guildId, category])
-}
-
-model GameSession {
-  id            String    @id @default(cuid())
-  guildId       String
-  channelId     String
-  gameType      String    // "trivia" | "riddle"
-  question      String
-  correctAnswer String
-  options       String    @default("[]") // JSON string array for trivia options
-  difficulty    String    @default("medium") // "easy" | "medium" | "hard"
-  status        String    @default("active") // "active" | "completed" | "expired"
-  winnerId      String?
-  pointsAwarded Int       @default(50)
-  expiresAt     DateTime
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  guild         Guild     @relation(fields: [guildId], references: [id], onDelete: Cascade)
-
-  @@index([guildId, status])
-}
-
-model HeartReward {
-  id           String   @id @default(cuid())
-  guildId      String
-  userId       String
-  milestone    String   // "15m" | "30m" | "1h" | "2h" | "3h" | "5h" | "streak_7d" | "streak_30d"
-  rewardType   String   @default("milestone") // "milestone" | "shop_purchase"
-  rewardValue  String   @default("")
-  xpAwarded    Int      @default(0)
-  coinsAwarded Int      @default(0)
-  claimedAt    DateTime @default(now())
-
-  @@unique([guildId, userId, milestone])
-  @@index([guildId, userId])
 }

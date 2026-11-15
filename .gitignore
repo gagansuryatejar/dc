@@ -1,37 +1,54 @@
-# Dependencies
-node_modules/
+# ─────────────────────────────────────────────────────────
+# NEXUS AI — .gitignore
+# ─────────────────────────────────────────────────────────
 
-# Build output (included for low-RAM hosts like Bot-Hosting so they don't have to compile)
-# dist/
-
-# Environment variables
+# Environment & secrets
 .env
 .env.local
 .env.*.local
+*.key
+*.pem
 
-# Database files
-data/
-*.db
-*.db-journal
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# TypeScript / build output
+dist/
+build/
+*.tsbuildinfo
+next/dist/
+
+# Prisma
+prisma/migrations/*.sql
 
 # Logs
 logs/
 *.log
 
-# IDE / Editor
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
-
-# OS files
 .DS_Store
-Thumbs.db
 
-# Prisma
-prisma/*.db
-prisma/*.db-journal
+# Data & backups
+data/
+backups/
+*.db
+*.sqlite
+*.sqlite3
 
-# TypeScript incremental
-*.tsbuildinfo
+# Docker
+.docker/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Turbo / Next.js
+.turbo/

@@ -1,76 +1,45 @@
 /**
- * Global constants for NEXUS AI.
+ * NEXUS AI — Application constants
  */
 
-/** Display name of the bot. */
 export const BOT_NAME = "NEXUS AI";
-
-/** Current version of the bot. */
 export const BOT_VERSION = "1.0.0";
+export const BOT_TAGLINE = "Your Community. Your AI. Your Connection.";
 
-/** Bot description. */
-export const BOT_DESCRIPTION =
-  "An advanced, modular Discord bot with AI capabilities, engagement systems, and comprehensive server management.";
+/** Default footer text appended to all branded embeds. */
+export const FOOTER_TEXT = "NEXUS AI • Your Community. Your AI. Your Connection.";
 
-/** Default embed footer text. */
-export const FOOTER_TEXT = `${BOT_NAME} v${BOT_VERSION}`;
+/** Discord gateway intents required by NEXUS AI. */
+export const DISCORD_INTENTS = [
+  "Guilds",
+  "GuildMembers",
+  "GuildMessages",
+  "MessageContent",
+  "GuildVoiceStates",
+  "GuildPresences",
+] as const;
 
-/** Bot thumbnail / avatar URL (fallback). */
-export const BOT_AVATAR_FALLBACK =
-  "https://cdn.discordapp.com/embed/avatars/0.png";
+/** Default partials for the Discord client. */
+export const DISCORD_PARTIALS = ["User", "Channel", "GuildMember", "Message"] as const;
 
-/** Common emojis used across embeds and messages. */
-export const EMOJIS = {
-  // Status
-  SUCCESS: "✅",
-  ERROR: "❌",
-  WARNING: "⚠️",
-  INFO: "ℹ️",
-  LOADING: "⏳",
+/** Cooldown (ms) between automatic XP grants per user (anti-spam). */
+export const XP_COOLDOWN_MS = 60_000;
 
-  // Modules
-  ENABLED: "🟢",
-  DISABLED: "🔴",
-  HEALTHY: "💚",
-  DEGRADED: "💛",
-  UNHEALTHY: "❤️",
+/** Random XP range per qualifying message. */
+export const XP_MIN = 15;
+export const XP_MAX = 25;
 
-  // UI
-  STAR: "⭐",
-  SPARKLE: "✨",
-  HEART: "💜",
-  BOLT: "⚡",
-  GEAR: "⚙️",
-  SHIELD: "🛡️",
-  CHART: "📊",
-  CLOCK: "🕐",
-  GLOBE: "🌐",
-  PING: "🏓",
-  SERVER: "🖥️",
-  DATABASE: "🗄️",
-  MEMORY: "💾",
-  CROWN: "👑",
-  WAVE: "👋",
-  ROCKET: "🚀",
-  BOOK: "📖",
-  LINK: "🔗",
-  HASH: "#️⃣",
-  MEGAPHONE: "📢",
-  WRENCH: "🔧",
-  LOCK: "🔒",
-  UNLOCK: "🔓",
-  ARROW_RIGHT: "▶️",
-  ARROW_LEFT: "◀️",
-  DOT: "•",
-  DASH: "—",
-  DIVIDER: "━━━━━━━━━━━━━━━━━━━━",
-} as const;
+/** Voice XP per minute of active participation. */
+export const VOICE_XP_PER_MINUTE = 1;
 
-/** Maximum items per embed field (Discord limit). */
-export const MAX_EMBED_FIELDS = 25;
+/** Default voice milestone thresholds (minutes). */
+export const VOICE_MILESTONES = [15, 30, 60, 120, 180, 300] as const;
 
-/** Maximum options for a select menu. */
-export const MAX_SELECT_OPTIONS = 25;
+/** Daily reward cooldown (24 hours). */
+export const DAILY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
-/** Default pagination page size. */
-export const DEFAULT_PAGE_SIZE = 10;
+/** Reputation cooldown (24 hours). */
+export const REP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+/** Idle timeout in milliseconds (default 30 seconds). */
+export const IDLE_TIMEOUT_MS = 30_000;

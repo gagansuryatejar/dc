@@ -1,149 +1,60 @@
 /**
- * /help slash command.
- * Interactive command navigator with category dropdown menus and permissions awareness.
+ * NEXUS AI — /help command
+ * Interactive categorized command directory.
  */
 
 import {
-  SlashCommandBuilder,
   ChatInputCommandInteraction,
-  EmbedBuilder,
-  ActionRowBuilder,
-  StringSelectMenuBuilder,
-  ComponentType,
+  type CacheType,
 } from "discord.js";
-import { CORE } from "../../../config/features.js";
-import { PermissionLevel, type NexusCommand } from "../../../types/index.js";
-import { Colors } from "../../../utils/embeds.js";
-import { FOOTER_TEXT, EMOJIS } from "../../../utils/constants.js";
-import { commandHandler } from "../../../handlers/commandHandler.js";
 import { moduleLoader } from "../../../handlers/moduleLoader.js";
 
-export const helpCommand: NexusCommand = {
-  data: new SlashCommandBuilder()
-    .setName("help")
-    .setDescription("Explore NEXUS AI commands, features, and operational guides")
-    .addStringOption((opt) =>
-      opt
-        .setName("category")
-        .setDescription("Jump straight to a command category")
-        .setRequired(false),
-    ),
-
-  module: CORE,
-  permissions: PermissionLevel.MEMBER,
-  cooldownMs: 2000,
-
-  async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const modules = moduleLoader.getAll();
-    const commands = Array.from(commandHandler.commands.values());
-
-    const buildOverviewEmbed = () => {
-      const embed = new EmbedBuilder()
-        .setColor(Colors.PRIMARY)
-        .setTitle(`${EMOJIS.BOOK} NEXUS AI Operating Guide`)
-        .setDescription(
-          "Welcome to **NEXUS AI** — the Discord Community Operating System.\n" +
-            "Select a subsystem category below using the dropdown menu to inspect available commands and permissions.",
-        )
-        .setFooter({ text: FOOTER_TEXT })
-        .setTimestamp();
-
-      for (const mod of modules) {
-        const modCmds = commands.filter((c) => c.module === mod.name);
-        embed.addFields({
-          name: `${mod.name.toUpperCase()} Subsystem`,
-          value: `${mod.description}\n**Commands:** \`${modCmds.map((c) => `/${c.data.name}`).join(", ") || "None"}\``,
-          inline: false,
-        });
-      }
-
-      return embed;
-    };
-
-    const buildCategoryEmbed = (categoryName: string) => {
-      const mod = moduleLoader.get(categoryName as any);
-      const modCmds = commands.filter((c) => c.module === categoryName);
-
-      const embed = new EmbedBuilder()
-        .setColor(Colors.PRIMARY)
-        .setTitle(`📖 ${categoryName.toUpperCase()} Module Commands`)
-        .setDescription(mod ? mod.description : "Module command list")
-        .setFooter({ text: FOOTER_TEXT })
-        .setTimestamp();
-
-      if (modCmds.length === 0) {
-        embed.addFields({ name: "Commands", value: "No slash commands registered for this module yet." });
-      } else {
-        for (const cmd of modCmds) {
-          const permText =
-            cmd.permissions === PermissionLevel.ADMIN
-              ? "Administrator"
-              : cmd.permissions === PermissionLevel.MODERATOR
-                ? "Moderator"
-                : "Everyone";
-          const desc = "description" in cmd.data ? cmd.data.description : "Context menu command";
-          embed.addFields({
-            name: `/${cmd.data.name}`,
-            value: `${desc || "No description provided."}\n*Required Permission: ${permText}*`,
-            inline: false,
-          });
-        }
-      }
-
-      return embed;
-    };
-
-    const options = [
-      {
-        label: "Overview",
-        description: "General introduction and category index",
-        value: "overview",
-        emoji: "🌐",
-      },
-      ...modules.map((m) => ({
-        label: m.name.charAt(0).toUpperCase() + m.name.slice(1),
-        description: m.description.slice(0, 100),
-        value: m.name,
-        emoji: "⚙️",
-      })),
-    ];
-
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId("help_category_select")
-      .setPlaceholder("Select a subsystem category to browse...")
-      .addOptions(options);
-
-    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
-
-    const initialReply = await interaction.reply({
-      embeds: [buildOverviewEmbed()],
-      components: [row],
-      fetchReply: true,
-    });
-
-    // Create a local collector to handle selections for up to 2 minutes
-    const collector = initialReply.createMessageComponentCollector({
-      componentType: ComponentType.StringSelect,
-      time: 120_000,
-      filter: (i) => i.user.id === interaction.user.id,
-    });
-
-    collector.on("collect", async (menuInt) => {
-      const selected = menuInt.values[0];
-      if (selected === "overview") {
-        await menuInt.update({ embeds: [buildOverviewEmbed()] });
-      } else {
-        await menuInt.update({ embeds: [buildCategoryEmbed(selected)] });
-      }
-    });
-
-    collector.on("end", async () => {
-      // Remove components when collector times out
-      try {
-        await interaction.editReply({ components: [] });
-      } catch {
-        // Ignored if message was deleted
-      }
-    });
-  },
+export const command = {
+  name: "help",
+  description: "Browse NEXUS AI commands by module.",
+  options: [
+    {
+      name: "module",
+      type: 3, // STRING
+      description: "Filter commands by module name.",
+      required: false,
+      choices: [
+        { name: "core", value: "core" },
+        { name: "engagement", value: "engagement" },
+        { name: "voice", value: "voice" },
+        { name: "heart", value: "heart" },
+        { name: "ai", value: "ai" },
+        { name: "moderation", value: "moderation" },
+        { name: "streamer", value: "streamer" },
+        { name: "analytics", value: "analytics" },
+      ],
+    },
+  ],
 };
+
+export async function handle(
+  interaction: ChatInputCommandInteraction<CacheType>,
+): Promise<void> {
+  const filter = interaction.options.getString("module");
+
+  let lines = "";
+  let any = false;
+
+  for (const name of moduleLoader.list()) {
+    const mod = moduleLoader.get(name);
+    if (!mod) continue;
+    if (filter && name !== filter) continue;
+    if (mod.commands.length === 0) continue;
+    any = true;
+    lines += `**/${name}** — ${mod.commands.map((c) => c.name).join(", ")}\n`;
+  }
+
+  if (!any) {
+    lines = "No commands available for the selected module.";
+  }
+
+  await interaction.reply({
+    content: `**NEXUS AI Commands**\n${lines}`,
+    flags: 64,
+  });
+}

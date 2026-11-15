@@ -1,95 +1,99 @@
 /**
- * /leaderboard slash command.
- * Displays community rankings across XP/levels, voice activity, reputation, and streaks.
+ * NEXUS AI — /leaderboard command
+ * Display top members by XP, level, voice time, or reputation.
  */
 
 import {
   SlashCommandBuilder,
-  ChatInputCommandInteraction,
   EmbedBuilder,
+  ChatInputCommandInteraction,
 } from "discord.js";
-import { ENGAGEMENT } from "../../../config/features.js";
-import { PermissionLevel, type NexusCommand } from "../../../types/index.js";
-import { Colors } from "../../../utils/embeds.js";
-import { FOOTER_TEXT } from "../../../utils/constants.js";
-import { prisma } from "../../../database/index.js";
-import { formatNumber } from "../../../utils/helpers.js";
+import { memberRepository } from "../../../database/index.js";
 
-const MEDALS = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
+export const data = new SlashCommandBuilder()
+  .setName("leaderboard")
+  .setDescription("View server leaderboards")
+  .addStringOption((option) =>
+    option
+      .setName("type")
+      .setDescription("Leaderboard type")
+      .setRequired(true)
+      .addChoices(
+        { name: "XP / Level", value: "xp" },
+        { name: "Voice Time", value: "voice" },
+        { name: "Reputation", value: "reputation" },
+        { name: "Daily Streak", value: "streak" },
+        { name: "Coins", value: "coins" },
+      ),
+  )
+  .addIntegerOption((option) =>
+    option.setName("limit").setDescription("Number of entries (default 10, max 25)").setMinValue(1).setMaxValue(25),
+  );
 
-export const leaderboardCommand: NexusCommand = {
-  data: new SlashCommandBuilder()
-    .setName("leaderboard")
-    .setDescription("View top community members across various activities")
-    .addStringOption((opt) =>
-      opt
-        .setName("category")
-        .setDescription("Ranking category")
-        .setRequired(false)
-        .addChoices(
-          { name: "Experience & Levels (XP)", value: "xp" },
-          { name: "Voice Activity", value: "voice" },
-          { name: "Reputation (Most Helpful)", value: "reputation" },
-          { name: "Daily Streaks", value: "streak" },
-        ),
-    ),
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const type = interaction.options.getString("type", true);
+  const limit = interaction.options.getInteger("limit") || 10;
 
-  module: ENGAGEMENT,
-  permissions: PermissionLevel.MEMBER,
-  cooldownMs: 3000,
+  let members: any[];
+  let title: string;
+  let fieldName: string;
+  let getValue: (m: any) => number | string;
 
-  async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const guildId = interaction.guildId;
-    if (!guildId) return;
+  switch (type) {
+    case "xp":
+      members = await memberRepository.findTopByXp(guildId, limit);
+      title = "🏆 XP Leaderboard";
+      fieldName = "XP";
+      getValue = (m) => m.xp.toLocaleString();
+      break;
+    case "voice":
+      members = await memberRepository.findTopByVoiceMinutes(guildId, limit);
+      title = "🎤 Voice Time Leaderboard";
+      fieldName = "Minutes";
+      getValue = (m) => (m.voiceMinutes || 0);
+      break;
+    case "reputation":
+      members = await memberRepository.findTopByReputation(guildId, limit);
+      title = "🤝 Reputation Leaderboard";
+      fieldName = "Rep";
+      getValue = (m) => m.reputation || 0;
+      break;
+    case "streak":
+      members = await memberRepository.findTopByStreak(guildId, limit);
+      title = "🔥 Daily Streak Leaderboard";
+      fieldName = "Days";
+      getValue = (m) => m.dailyStreak || 0;
+      break;
+    case "coins":
+      members = await memberRepository.findTopByCoins(guildId, limit);
+      title = "💰 Coins Leaderboard";
+      fieldName = "Coins";
+      getValue = (m) => (m.coins || 0).toLocaleString();
+      break;
+    default:
+      await interaction.reply({ content: "Invalid leaderboard type.", flags: 64 });
+      return;
+  }
 
-    const category = interaction.options.getString("category") || "xp";
+  if (members.length === 0) {
+    await interaction.reply({ content: "No data available for this leaderboard.", flags: 64 });
+    return;
+  }
 
-    let orderBy: Record<string, "desc"> = { xp: "desc" };
-    let title = "🏆 Experience & Level Leaderboard";
-    let formatter = (m: any) => `Level **${m.level}** — \`${formatNumber(m.xp)} XP\``;
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setColor(0x5865f2)
+    .setFooter({ text: "NEXUS AI Community" });
 
-    if (category === "voice") {
-      orderBy = { voiceMinutes: "desc" };
-      title = "🎙️ Voice Activity Leaderboard";
-      formatter = (m: any) => `**${(m.voiceMinutes / 60).toFixed(1)}h** (\`${formatNumber(m.voiceMinutes)} mins\`)`;
-    } else if (category === "reputation") {
-      orderBy = { reputation: "desc" };
-      title = "🤝 Most Helpful Members (Reputation)";
-      formatter = (m: any) => `**+${formatNumber(m.reputation)}** endorsements`;
-    } else if (category === "streak") {
-      orderBy = { dailyStreak: "desc" };
-      title = "🔥 Daily Activity Streaks";
-      formatter = (m: any) => `**${formatNumber(m.dailyStreak)} days** streak`;
-    }
+  const description = members
+    .map((m, i) => {
+      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "`#" + (i + 1) + "`";
+      return `${medal} <@${m.userId}> — **${getValue(m)}** ${fieldName}`;
+    })
+    .join("\n");
 
-    const topMembers = await prisma.guildMember.findMany({
-      where: { guildId },
-      orderBy,
-      take: 10,
-    });
+  embed.setDescription(description);
 
-    const embed = new EmbedBuilder()
-      .setColor(Colors.PRIMARY)
-      .setTitle(title)
-      .setDescription(`Top community contributors in **${interaction.guild?.name}**:`)
-      .setFooter({ text: FOOTER_TEXT })
-      .setTimestamp();
-
-    if (topMembers.length === 0) {
-      embed.setDescription("No activity data recorded yet for this community.");
-    } else {
-      const lines = topMembers.map((m, idx) => {
-        const medal = MEDALS[idx] || `\`#${idx + 1}\``;
-        return `${medal} <@${m.userId}> — ${formatter(m)}`;
-      });
-
-      embed.addFields({
-        name: "Standings",
-        value: lines.join("\n"),
-        inline: false,
-      });
-    }
-
-    await interaction.reply({ embeds: [embed] });
-  },
-};
+  await interaction.reply({ embeds: [embed] });
+}

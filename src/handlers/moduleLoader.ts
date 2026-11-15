@@ -1,134 +1,203 @@
 /**
- * Module loader for NEXUS AI.
- * Discovers, loads, registers commands & events, and manages lifecycle of all NexusModule instances.
+ * NEXUS AI — ModuleLoader
+ * Manages module lifecycle: load, unload, healthCheck, command/event registration,
+ * and interaction dispatch. Modules are isolated per guild via feature flags.
  */
 
-import { Collection, type Client } from "discord.js";
-import type { NexusModule } from "../types/index.js";
-import type { ModuleName } from "../config/features.js";
-import { commandHandler } from "./commandHandler.js";
-import logger from "../logger/index.js";
+import { createModuleLogger } from "../utils/logger.js";
+import type { ModuleHealth, ModuleName } from "../types/index.js";
 
-export class ModuleLoader {
-  /** All loaded modules keyed by name. */
-  public readonly modules = new Collection<ModuleName, NexusModule>();
+const moduleLog = createModuleLogger("module-loader");
 
-  /** Map of active event listeners per module for clean unloading. */
-  private readonly eventListeners = new Map<ModuleName, Array<{ name: string; handler: (...args: any[]) => void }>>();
-
-  private client?: Client;
-
-  /**
-   * Bind the Discord client instance to the module loader.
-   */
-  setClient(client: Client): void {
-    this.client = client;
-  }
-
-  /**
-   * Register and load a module, binding commands and event listeners.
-   */
-  async load(mod: NexusModule): Promise<void> {
-    this.modules.set(mod.name, mod);
-
-    // 1. Register module commands
-    for (const cmd of mod.commands) {
-      commandHandler.register(cmd);
-    }
-
-    // 2. Register module events if client is available
-    if (this.client) {
-      this.attachEvents(mod);
-    }
-
-    await mod.onLoad();
-    logger.info(`Module loaded: ${mod.name} v${mod.version} (${mod.commands.length} commands, ${mod.events.length} events)`);
-  }
-
-  /**
-   * Attach a module's events to the Discord client.
-   */
-  private attachEvents(mod: NexusModule): void {
-    if (!this.client) return;
-
-    const listeners: Array<{ name: string; handler: (...args: any[]) => void }> = [];
-
-    for (const event of mod.events) {
-      const listener = (...args: any[]) => {
-        try {
-          (event.execute as any)(...args);
-        } catch (err) {
-          logger.error({ err, event: event.name, module: mod.name }, "Error in module event listener");
-        }
-      };
-
-      if (event.once) {
-        this.client.once(event.name as any, listener);
-      } else {
-        this.client.on(event.name as any, listener);
-      }
-
-      listeners.push({ name: event.name as string, handler: listener });
-    }
-
-    this.eventListeners.set(mod.name, listeners);
-  }
-
-  /**
-   * Attach events for all currently loaded modules (called after client initialization).
-   */
-  attachAllEvents(client: Client): void {
-    this.client = client;
-    for (const mod of this.modules.values()) {
-      if (!this.eventListeners.has(mod.name)) {
-        this.attachEvents(mod);
-      }
-    }
-  }
-
-  /**
-   * Unload a module, detaching listeners and clearing commands.
-   */
-  async unload(name: ModuleName): Promise<void> {
-    const mod = this.modules.get(name);
-    if (!mod) return;
-
-    // Detach event listeners
-    const listeners = this.eventListeners.get(name);
-    if (listeners && this.client) {
-      for (const { name: evtName, handler } of listeners) {
-        this.client.removeListener(evtName, handler);
-      }
-      this.eventListeners.delete(name);
-    }
-
-    await mod.onUnload();
-    this.modules.delete(name);
-    logger.info(`Module unloaded: ${name}`);
-  }
-
-  /**
-   * Get a module by name.
-   */
-  get(name: ModuleName): NexusModule | undefined {
-    return this.modules.get(name);
-  }
-
-  /**
-   * Get all loaded modules.
-   */
-  getAll(): NexusModule[] {
-    return Array.from(this.modules.values());
-  }
-
-  /**
-   * Get the count of loaded modules.
-   */
-  get size(): number {
-    return this.modules.size;
-  }
+/** Shape of a NEXUS module. */
+export interface NexusModule {
+  name: ModuleName;
+  /** Array of slash-command definitions (for registration). */
+  commands: Array<{
+    name: string;
+    description: string;
+    options?: unknown[];
+  }>;
+  /** Array of event names this module listens to. */
+  events: readonly string[];
+  /** Optional handler for Discord interactions. */
+  handleInteraction?: (
+    interaction: import("discord.js").BaseInteraction,
+  ) => Promise<void> | void;
+  /** Optional health check. */
+  healthCheck?: () => Promise<ModuleHealth>;
+  /** Optional setup called on load. */
+  onLoad?: () => Promise<void> | void;
+  /** Optional teardown called on unload. */
+  onUnload?: () => Promise<void> | void;
 }
 
-/** Singleton module loader instance. */
-export const moduleLoader = new ModuleLoader();
-export default moduleLoader;
+const loadedModules = new Map<ModuleName, NexusModule>();
+
+export const moduleLoader = {
+  /** Number of loaded modules. */
+  get size(): number {
+    return loadedModules.size;
+  },
+
+  /** Get a module by name. */
+  get(name: ModuleName): NexusModule | undefined {
+    return loadedModules.get(name);
+  },
+
+  /** List all loaded module names. */
+  list(): ModuleName[] {
+    return Array.from(loadedModules.keys());
+  },
+
+  /** Check if a module is loaded and enabled for a guild. */
+  isLoaded(name: ModuleName): boolean {
+    return loadedModules.has(name);
+  },
+
+  /**
+   * Load a single module. Calls onLoad if present.
+   */
+  async load(module: NexusModule): Promise<void> {
+    if (loadedModules.has(module.name)) {
+      moduleLog.warn({ module: module.name }, "Module already loaded, skipping");
+      return;
+    }
+
+    if (module.onLoad) {
+      try {
+        await module.onLoad();
+      } catch (err) {
+        moduleLog.error({ err, module: module.name }, "Module onLoad failed");
+        throw err;
+      }
+    }
+
+    loadedModules.set(module.name, module);
+    moduleLog.info({ module: module.name, commands: module.commands.length }, "Module loaded");
+  },
+
+  /**
+   * Load all modules passed explicitly. Modules are registered by index.ts.
+   */
+  async loadAll(): Promise<void> {
+    // Modules are loaded explicitly in src/index.ts to keep load order deterministic
+    // and to avoid dynamic imports that break tree-shaking.
+  },
+
+  /**
+   * Unload a single module. Calls onUnload if present.
+   */
+  async unload(name: ModuleName): Promise<void> {
+    const module = loadedModules.get(name);
+    if (!module) return;
+
+    if (module.onUnload) {
+      try {
+        await module.onUnload();
+      } catch (err) {
+        moduleLog.error({ err, module: name }, "Module onUnload failed");
+      }
+    }
+
+    loadedModules.delete(name);
+    moduleLog.info({ module: name }, "Module unloaded");
+  },
+
+  /** Unload all modules. */
+  async unloadAll(): Promise<void> {
+    const names = Array.from(loadedModules.keys());
+    for (const name of names) {
+      await this.unload(name);
+    }
+  },
+
+  /**
+   * Dispatch a Discord interaction to the appropriate module handler.
+   * Multiple modules can handle the same interaction (first handler wins).
+   */
+  async handleInteraction(
+    interaction: import("discord.js").BaseInteraction,
+  ): Promise<void> {
+    // Slash commands
+    if (interaction.isChatInputCommand()) {
+      const commandName = interaction.commandName;
+      for (const [, module] of loadedModules) {
+        const matches = module.commands.some((c) => c.name === commandName);
+        if (!matches) continue;
+
+        const handler = module.handleInteraction;
+        if (!handler) {
+          moduleLog.warn(
+            { module: module.name, command: commandName },
+            "Module has command but no interaction handler",
+          );
+          continue;
+        }
+
+        try {
+          await handler(interaction);
+          return;
+        } catch (err) {
+          moduleLog.error({ err, module: module.name, command: commandName }, "Command handler error");
+          if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({
+              content: "❌ An error occurred while processing your request.",
+              flags: 64, // ephemeral
+            });
+          } else {
+            await interaction.reply({
+              content: "❌ An error occurred while processing your request.",
+              flags: 64,
+            });
+          }
+          return;
+        }
+      }
+
+      // No module handled this command
+      moduleLog.warn({ command: commandName }, "No module handled this slash command");
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: "❌ This command is not currently available.",
+          flags: 64,
+        });
+      }
+      return;
+    }
+
+    // Buttons, select menus, modals — dispatch to any module that handles them
+    for (const [, module] of loadedModules) {
+      if (!module.handleInteraction) continue;
+      try {
+        await module.handleInteraction(interaction);
+        return;
+      } catch (err) {
+        moduleLog.error({ err, module: module.name }, "Interaction handler error");
+      }
+    }
+  },
+
+  /**
+   * Run health checks on all loaded modules.
+   */
+  async healthCheckAll(): Promise<ModuleHealth[]> {
+    const results: ModuleHealth[] = [];
+    for (const [name, module] of loadedModules) {
+      if (module.healthCheck) {
+        try {
+          results.push(await module.healthCheck());
+        } catch (err) {
+          results.push({
+            status: "unhealthy",
+            module: name,
+            details: { error: String(err) },
+          });
+        }
+      } else {
+        results.push({ status: "healthy", module: name });
+      }
+    }
+    return results;
+  },
+};

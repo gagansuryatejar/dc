@@ -1,22 +1,26 @@
+/**
+ * NEXUS AI — Centralized Configuration Engine
+ * Zod-validated environment variables with fail-safe defaults and clear diagnostics.
+ * PostgreSQL is the production database (see DATABASE_URL).
+ */
+
 import { config as dotenvConfig } from "dotenv";
 import { z } from "zod";
 
-// Load .env file before anything else
+// Load .env before anything else
 dotenvConfig();
 
 /**
  * Deployment modes supported by NEXUS AI.
- * - `android`  — running on Termux / Android; native deps (voice) are disabled.
- * - `server`   — full-featured server deployment.
+ * `server` = full-featured Linux VPS / cloud deployment.
  */
 export const DeploymentMode = {
-  ANDROID: "android",
   SERVER: "server",
 } as const;
 
 export type DeploymentMode = (typeof DeploymentMode)[keyof typeof DeploymentMode];
 
-// ── Zod schema for every env var ────────────────────────
+// ── Zod schema for every env var ──────────────────────────────────────
 
 const envSchema = z.object({
   // Discord — required
@@ -31,8 +35,21 @@ const envSchema = z.object({
   OWNER_ID: z.string().default(""),
   GUILD_ID: z.string().default(""),
 
-  // Database
-  DATABASE_URL: z.string().default("file:./data/nexus.db"),
+  // Database — PostgreSQL (production) or SQLite (local/development).
+  // Both are first-class: Prisma drives the actual connector from the URL prefix.
+  DATABASE_URL: z
+    .string({ required_error: "DATABASE_URL is required. Set it in your .env file." })
+    .min(1, "DATABASE_URL must not be empty.")
+    .refine(
+      (url) =>
+        url.startsWith("postgresql://") ||
+        url.startsWith("postgres://") ||
+        url.startsWith("file:"),
+      "DATABASE_URL must be a PostgreSQL (postgresql://) or SQLite (file:) connection string.",
+    ),
+
+  // Redis — cache & queue (required in production)
+  REDIS_URL: z.string().default(""),
 
   // Logging
   LOG_LEVEL: z
@@ -40,9 +57,11 @@ const envSchema = z.object({
     .default("info"),
 
   // Environment
-  NODE_ENV: z
-    .enum(["development", "production", "test"])
-    .default("development"),
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+
+  // Backend API
+  API_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
+  API_HOST: z.string().default("0.0.0.0"),
 
   // AI
   AI_PROVIDER: z.enum(["gemini", "openai", "ollama"]).default("gemini"),
@@ -50,23 +69,19 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().default(""),
   OLLAMA_URL: z.string().url().default("http://localhost:11434"),
 
-  // Dashboard
+  // Dashboard (Phase 11)
   DASHBOARD_PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   DASHBOARD_SECRET: z.string().default(""),
 
+  // Security
+  JWT_SECRET: z.string().default(""),
+  ENCRYPTION_KEY: z.string().default(""),
+
   // Deployment
-  DEPLOYMENT_MODE: z
-    .enum(["android", "server"])
-    .default("server"),
-  ANDROID_VOICE_MODE: z
-    .enum(["lightweight", "advanced"])
-    .default("lightweight"),
-  ANDROID_BATTERY_GUARD: z
-    .coerce.boolean()
-    .default(true),
+  DEPLOYMENT_MODE: z.enum(["server"]).default("server"),
 });
 
-// ── Parse & validate ────────────────────────────────────
+// ── Parse & validate ──────────────────────────────────────────────────
 
 const parsed = envSchema.safeParse(process.env);
 
@@ -75,7 +90,7 @@ if (!parsed.success) {
     .map((issue) => `  ✖ ${issue.path.join(".")}: ${issue.message}`)
     .join("\n");
 
-  // Use console.error directly — the logger may not be initialised yet
+  // console.error directly — the logger may not be initialised yet
   // eslint-disable-next-line no-console
   console.error(
     `\n❌  Environment validation failed:\n${formatted}\n\nSee .env.example for reference.\n`,
@@ -85,7 +100,7 @@ if (!parsed.success) {
 
 const env = parsed.data;
 
-// ── Exported config object ──────────────────────────────
+// ── Exported config object ────────────────────────────────────────────
 
 export const config = {
   // Discord
@@ -98,9 +113,14 @@ export const config = {
     guildId: env.GUILD_ID,
   },
 
-  // Database
+  // Database (PostgreSQL)
   database: {
     url: env.DATABASE_URL,
+  },
+
+  // Redis
+  redis: {
+    url: env.REDIS_URL,
   },
 
   // Logging
@@ -111,6 +131,12 @@ export const config = {
   isDev: env.NODE_ENV === "development",
   isProd: env.NODE_ENV === "production",
   isTest: env.NODE_ENV === "test",
+
+  // Backend API
+  api: {
+    port: env.API_PORT,
+    host: env.API_HOST,
+  },
 
   // AI
   ai: {
@@ -126,19 +152,20 @@ export const config = {
     secret: env.DASHBOARD_SECRET,
   },
 
+  // Security
+  security: {
+    jwtSecret: env.JWT_SECRET,
+    encryptionKey: env.ENCRYPTION_KEY,
+  },
+
   // Deployment
   deploymentMode: env.DEPLOYMENT_MODE as DeploymentMode,
-  android: {
-    voiceMode: env.ANDROID_VOICE_MODE,
-    batteryGuard: env.ANDROID_BATTERY_GUARD,
-  },
 } as const;
 
-// ── Helpers ─────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────
 
-/** `true` when running in Android / Termux mode. */
-export const isAndroid: boolean = config.deploymentMode === DeploymentMode.ANDROID;
+/** `true` when running in production. */
+export const isProduction: boolean = config.isProd;
 
-/** `true` when running in Android Lightweight Mode (voice audio receive bypassed). */
-export const isAndroidLightweight: boolean =
-  isAndroid && config.android.voiceMode === "lightweight";
+/** `true` when running in test mode. */
+export const isTest: boolean = config.isTest;

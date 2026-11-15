@@ -1,104 +1,79 @@
 /**
- * /profile slash command.
- * Displays a member's community identity card, progression, stats, badges, and bio.
+ * NEXUS AI — /profile command
+ * Display member profile with level, XP, badges, streak, reputation, bio.
  */
 
 import {
   SlashCommandBuilder,
-  ChatInputCommandInteraction,
   EmbedBuilder,
+  ChatInputCommandInteraction,
+  User,
 } from "discord.js";
-import { ENGAGEMENT } from "../../../config/features.js";
-import { PermissionLevel, type NexusCommand } from "../../../types/index.js";
-import { Colors } from "../../../utils/embeds.js";
-import { FOOTER_TEXT, EMOJIS } from "../../../utils/constants.js";
-import { memberRepository, prisma } from "../../../database/index.js";
-import { levelService } from "../services/level.service.js";
-import { achievementService } from "../services/achievement.service.js";
-import { formatNumber } from "../../../utils/helpers.js";
+import { memberRepository } from "../../../database/index.js";
+import { calculateProgress } from "../services/level.service.js";
+import { getBadgeById } from "../services/achievement.service.js";
+import { formatDuration } from "../../../utils/helpers.js";
 
-export const profileCommand: NexusCommand = {
-  data: new SlashCommandBuilder()
-    .setName("profile")
-    .setDescription("Inspect your community profile, level, achievements, and statistics")
-    .addUserOption((opt) =>
-      opt
-        .setName("member")
-        .setDescription("The user whose profile you want to inspect (defaults to yourself)")
-        .setRequired(false),
-    ),
+export const data = new SlashCommandBuilder()
+  .setName("profile")
+  .setDescription("View your or another member's profile")
+  .addUserOption((option) =>
+    option.setName("user").setDescription("Member to view (defaults to you)"),
+  );
 
-  module: ENGAGEMENT,
-  permissions: PermissionLevel.MEMBER,
-  cooldownMs: 3000,
+function formatBadges(badgeIds: string[]): string {
+  if (badgeIds.length === 0) return "No badges yet";
+  const badgeList = badgeIds.map((id) => {
+    const badge = getBadgeById(id);
+    return badge ? `${badge.emoji} ${badge.name}` : id;
+  });
+  return badgeList.join(", ");
+}
 
-  async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const guildId = interaction.guildId;
-    if (!guildId) return;
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const targetUser: User = interaction.options.getUser("user") || interaction.user;
+  const guildId = interaction.guildId!;
 
-    const targetUser = interaction.options.getUser("member") || interaction.user;
-    const targetMember = await interaction.guild?.members.fetch(targetUser.id).catch(() => null);
+  // Ensure member record exists
+  await memberRepository.findOrCreate({ guildId, userId: targetUser.id, username: targetUser.username });
 
-    const record = await memberRepository.findOrCreate(
-      guildId,
-      targetUser.id,
-      targetUser.username,
-    );
+  const member = await memberRepository.findByGuildAndUser(guildId, targetUser.id);
+  if (!member) {
+    await interaction.reply({ content: "Could not load profile.", flags: 64 });
+    return;
+  }
 
-    const progress = levelService.calculateProgress(record.xp);
-    const progressBar = levelService.renderProgressBar(progress.progressPercent, 10);
-    const badgeDisplay = achievementService.formatBadgeDisplay(record.badges);
+  const progress = calculateProgress(member.xp);
+  const badgesList = formatBadges(JSON.parse(member.badges || "[]"));
 
-    // Calculate server rank based on XP
-    const rankCount = await prisma.guildMember.count({
-      where: {
-        guildId,
-        xp: { gt: record.xp },
-      },
-    });
-    const rank = rankCount + 1;
+  const embed = new EmbedBuilder()
+    .setTitle(`${targetUser.username}'s Profile`)
+    .setThumbnail(targetUser.displayAvatarURL({ size: 256 }))
+    .setColor(0x5865f2)
+    .addFields(
+      { name: "📊 Level", value: `**Level ${progress.level}** (${progress.progressPercent}%)`, inline: true },
+      { name: "✨ XP", value: `${member.xp.toLocaleString()} / ${progress.nextLevelXp.toLocaleString()}`, inline: true },
+      { name: "🔥 Daily Streak", value: `${member.dailyStreak} day${member.dailyStreak !== 1 ? "s" : ""}`, inline: true },
+      { name: "🤝 Reputation", value: member.reputation.toString(), inline: true },
+      { name: "🎤 Voice Time", value: formatDuration(member.voiceMinutes * 60000), inline: true },
+      { name: "💰 Coins", value: member.coins.toLocaleString(), inline: true },
+    )
+    .setFooter({ text: "NEXUS AI Community" });
 
-    const voiceHours = (record.voiceMinutes / 60).toFixed(1);
+  if (member.birthday) {
+    embed.addFields({ name: "🎂 Birthday", value: member.birthday, inline: true });
+  }
 
-    const embed = new EmbedBuilder()
-      .setColor(Colors.PRIMARY)
-      .setTitle(`📜 Community Profile — ${targetMember?.displayName || targetUser.username}`)
-      .setDescription(record.bio || "*No personal bio set. Use `/intro` to set your community intro!*")
-      .setThumbnail(targetUser.displayAvatarURL({ size: 256 }))
-      .addFields(
-        {
-          name: "Level & Progression",
-          value:
-            `**Level ${progress.level}** (Rank #${rank})\n` +
-            `XP: \`${formatNumber(progress.currentLevelXp)} / ${formatNumber(progress.xpNeededForNextLevel)}\` (${formatNumber(record.xp)} Total)\n` +
-            `${progressBar}`,
-          inline: false,
-        },
-        {
-          name: `${EMOJIS.BOLT} Engagement Stats`,
-          value:
-            `💬 Messages: **${formatNumber(record.messageCount)}**\n` +
-            `🎙️ Voice Time: **${voiceHours}h** (${formatNumber(record.voiceMinutes)}m)\n` +
-            `🔥 Daily Streak: **${record.dailyStreak} days**`,
-          inline: true,
-        },
-        {
-          name: `${EMOJIS.STAR} Social Standing`,
-          value:
-            `🤝 Reputation: **+${formatNumber(record.reputation)}**\n` +
-            `🪙 Virtual Coins: **${formatNumber(record.coins)}**\n` +
-            `🎂 Birthday: **${record.birthday || "Not set"}**`,
-          inline: true,
-        },
-        {
-          name: `🏆 Badges & Achievements`,
-          value: badgeDisplay,
-          inline: false,
-        },
-      )
-      .setFooter({ text: FOOTER_TEXT })
-      .setTimestamp();
+  if (member.bio) {
+    embed.addFields({ name: "📝 Bio", value: member.bio, inline: false });
+  }
 
-    await interaction.reply({ embeds: [embed] });
-  },
-};
+  if (badgesList !== "No badges yet") {
+    embed.addFields({ name: "🏅 Badges", value: badgesList, inline: false });
+  }
+
+  embed.addFields({ name: "🆔 User ID", value: targetUser.id, inline: true });
+  embed.addFields({ name: "📅 Joined Discord", value: `<t:${Math.floor(targetUser.createdTimestamp / 1000)}:R>`, inline: true });
+
+  await interaction.reply({ embeds: [embed] });
+}

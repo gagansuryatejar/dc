@@ -1,90 +1,92 @@
 /**
- * Leveling & XP calculation engine for NEXUS AI.
- * Uses a quadratic progression curve with anti-spam cooldown protection.
+ * NEXUS AI — Level & XP Progression Service
+ * Quadratic XP curve: Level L requires 50 * L^2 + 50 * L XP total.
+ * Anti-spam: 60-second cooldown per user for message XP.
  */
 
-export interface LevelProgress {
+import { XP_COOLDOWN_MS, XP_MIN, XP_MAX } from "../../../utils/constants.js";
+
+const userXpCooldowns = new Map<string, number>();
+
+/** Calculate level and progress from total XP. */
+export function calculateProgress(totalXp: number): {
   level: number;
   currentLevelXp: number;
-  xpNeededForNextLevel: number;
+  nextLevelXp: number;
   progressPercent: number;
-  totalXp: number;
+} {
+  if (totalXp <= 0) {
+    return { level: 0, currentLevelXp: 0, nextLevelXp: 100, progressPercent: 0 };
+  }
+
+  // Quadratic formula: xp = 50 * L^2 + 50 * L
+  // Solve for L: 50L^2 + 50L - xp = 0
+  // L = (-50 + sqrt(2500 + 200 * xp)) / 100
+  const discriminant = 2500 + 200 * totalXp;
+  const level = Math.floor((-50 + Math.sqrt(discriminant)) / 100);
+
+  // XP needed to reach the START of this level
+  const levelStartXp = 50 * level * level + 50 * level;
+  // XP needed to reach the START of the next level
+  const nextLevelXp = 50 * (level + 1) * (level + 1) + 50 * (level + 1);
+
+  // currentLevelXp = XP within current level (total XP minus XP at start of level)
+  const currentLevelXp = totalXp - levelStartXp;
+  const progressPercent = Math.min(100, Math.max(0, (currentLevelXp / (nextLevelXp - levelStartXp)) * 100));
+
+  return { level, currentLevelXp, nextLevelXp, progressPercent: Math.round(progressPercent * 100) / 100 };
 }
 
-export class LevelService {
-  /** Anti-spam tracking: userId -> last Xp timestamp */
-  private readonly xpCooldowns = new Map<string, number>();
+/** Render a text-based progress bar.
+ * @param currentXp - The current XP earned or percentage (0-100)
+ * @param totalXp - The total XP needed or bar width (defaults to 12)
+ * @param _width - Reserved for future use (legacy compatibility)
+ */
+export function renderProgressBar(currentXp: number, totalXp: number = 12, _width: number = 12): string {
+  // If totalXp is provided as second arg and currentXp is >= 0 and <= 100, interpret as percentage
+  const percent = Math.min(100, Math.max(0, currentXp));
+  const actualWidth = Math.max(1, totalXp);
+  const filled = Math.max(0, Math.min(actualWidth, Math.round((percent / 100) * actualWidth)));
+  const empty = Math.max(0, actualWidth - filled);
+  return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${Math.round(percent)}%`;
+}
 
-  /** Cooldown between awarding XP for messages: 60 seconds */
-  public readonly COOLDOWN_MS = 60_000;
-
-  /**
-   * Calculates the XP needed to advance from `level` to `level + 1`.
-   * Curve: 100, 155, 220, 295, 380...
-   */
-  xpForNextLevel(level: number): number {
-    return 5 * level * level + 50 * level + 100;
-  }
-
-  /**
-   * Resolves the current level and progress from total accumulated XP.
-   */
-  calculateProgress(totalXp: number): LevelProgress {
-    let level = 0;
-    let xpRemaining = Math.max(0, totalXp);
-    let needed = this.xpForNextLevel(level);
-
-    while (xpRemaining >= needed) {
-      xpRemaining -= needed;
-      level++;
-      needed = this.xpForNextLevel(level);
-    }
-
-    const progressPercent = Math.min(100, Math.floor((xpRemaining / needed) * 100));
-
-    return {
-      level,
-      currentLevelXp: xpRemaining,
-      xpNeededForNextLevel: needed,
-      progressPercent,
-      totalXp,
-    };
-  }
-
-  /**
-   * Checks if user is eligible for message XP based on anti-spam cooldown.
-   */
-  canEarnMessageXp(userId: string): boolean {
-    const now = Date.now();
-    const last = this.xpCooldowns.get(userId);
-    if (!last || now - last >= this.COOLDOWN_MS) {
-      this.xpCooldowns.set(userId, now);
-      return true;
-    }
+/** Check if user can earn message XP (anti-spam cooldown). */
+export function canEarnMessageXp(userId: string): boolean {
+  const now = Date.now();
+  const lastEarned = userXpCooldowns.get(userId) || 0;
+  if (now - lastEarned < XP_COOLDOWN_MS) {
     return false;
   }
-
-  /**
-   * Returns a randomized XP amount between 15 and 25 for a message.
-   */
-  getRandomMessageXp(): number {
-    return Math.floor(Math.random() * 11) + 15;
-  }
-
-  /**
-   * Generates a sleek Unicode visual progress bar.
-   * Example: [████████░░░░░░░░] 50%
-   */
-  renderProgressBar(percent: number, length = 12): string {
-    const safePercent = Math.max(0, Math.min(100, percent));
-    const filledCount = Math.round((safePercent / 100) * length);
-    const emptyCount = Math.max(0, length - filledCount);
-
-    const filledBar = "█".repeat(filledCount);
-    const emptyBar = "░".repeat(emptyCount);
-
-    return `\`[${filledBar}${emptyBar}]\` **${safePercent}%**`;
-  }
+  userXpCooldowns.set(userId, now);
+  return true;
 }
 
-export const levelService = new LevelService();
+/** Get random XP for a qualifying message. */
+export function getRandomMessageXp(): number {
+  return Math.floor(Math.random() * (XP_MAX - XP_MIN + 1)) + XP_MIN;
+}
+
+/** Voice XP per minute. */
+export const VOICE_XP_PER_MINUTE = 1;
+
+/** Calculate XP needed for a specific level. */
+export function getXpForLevel(level: number): number {
+  return 50 * level * level + 50 * level;
+}
+
+/** Get all level thresholds up to a max level. */
+export function getLevelThresholds(maxLevel = 50): number[] {
+  return Array.from({ length: maxLevel + 1 }, (_, i) => getXpForLevel(i));
+}
+
+/** Service object for test compatibility. */
+export const levelService = {
+  calculateProgress,
+  renderProgressBar,
+  canEarnMessageXp,
+  getRandomMessageXp,
+  getXpForLevel,
+  getLevelThresholds,
+  VOICE_XP_PER_MINUTE,
+};

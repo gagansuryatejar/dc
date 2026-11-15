@@ -1,53 +1,106 @@
 /**
- * Core module definition for NEXUS AI.
- * Always loaded, foundational subsystem for all bot operations.
+ * NEXUS AI — Core Module
+ * Foundation commands (/nexus, /help, /admin) and core events.
  */
 
-import { CORE } from "../../config/features.js";
-import type { NexusModule, ModuleHealth } from "../../types/index.js";
-import { nexusCommand } from "./commands/nexus.js";
-import { helpCommand } from "./commands/help.js";
-import { adminCommand } from "./commands/admin.js";
-import { readyEvent } from "./events/ready.js";
-import { guildCreateEvent } from "./events/guild-create.js";
-import { guildDeleteEvent } from "./events/guild-delete.js";
-import { interactionCreateEvent } from "./events/interaction-create.js";
+import {
+  ChatInputCommandInteraction,
+  Events,
+  type BaseInteraction,
+} from "discord.js";
 import { createModuleLogger } from "../../utils/logger.js";
+import {
+  command as nexusCommandDef,
+  handle as nexusCommandHandle,
+} from "./commands/nexus.js";
+import {
+  command as helpCommandDef,
+  handle as helpCommandHandle,
+} from "./commands/help.js";
+import {
+  command as adminCommandDef,
+  handle as adminCommandHandle,
+} from "./commands/admin.js";
 
-const logger = createModuleLogger("module:core");
+const moduleLog = createModuleLogger("core");
 
-export class CoreModule implements NexusModule {
-  public readonly name = CORE;
-  public readonly description = "Core bot lifecycle, diagnostics, permissions, and server administration";
-  public readonly version = "1.0.0";
+/**
+ * Commands exported by this module (registered with Discord).
+ */
+export const commands = [
+  nexusCommandDef,
+  helpCommandDef,
+  adminCommandDef,
+];
 
-  public readonly commands = [nexusCommand, helpCommand, adminCommand];
-  public readonly events = [readyEvent, guildCreateEvent, guildDeleteEvent, interactionCreateEvent];
+/** Events this module listens to. */
+export const events = [
+  Events.ClientReady,
+  Events.GuildCreate,
+  Events.GuildDelete,
+  Events.InteractionCreate,
+] as const;
 
-  async onLoad(): Promise<void> {
-    logger.info("Initializing Core Subsystem...");
+const moduleName = "core" as const;
+
+/**
+ * Handle interactions routed to the core module.
+ */
+export async function handleInteraction(interaction: BaseInteraction): Promise<void> {
+  if (!interaction.isChatInputCommand()) return;
+
+  const commandName = interaction.commandName;
+
+  if (commandName === nexusCommandDef.name) {
+    await nexusCommandHandle(interaction as ChatInputCommandInteraction);
+    return;
   }
 
-  async onUnload(): Promise<void> {
-    logger.info("Core Subsystem unloaded.");
+  if (commandName === helpCommandDef.name) {
+    await helpCommandHandle(interaction as ChatInputCommandInteraction);
+    return;
   }
 
-  async onEnable(): Promise<void> {
-    // Core is perpetually enabled
-  }
-
-  async onDisable(): Promise<void> {
-    // Core cannot be disabled
-  }
-
-  async healthCheck(): Promise<ModuleHealth> {
-    return {
-      status: "healthy",
-      message: "Core subsystem is operational.",
-      lastCheck: new Date(),
-    };
+  if (commandName === adminCommandDef.name) {
+    await adminCommandHandle(interaction as ChatInputCommandInteraction);
+    return;
   }
 }
 
-export const coreModule = new CoreModule();
-export default coreModule;
+/**
+ * Health check for the core module.
+ */
+export async function healthCheck() {
+  return {
+    status: "healthy" as const,
+    module: moduleName,
+    details: {
+      commands: commands.length,
+      events: events.length,
+    },
+  };
+}
+
+/**
+ * Optional setup on module load.
+ */
+export async function onLoad() {
+  moduleLog.info("Core module initialised");
+}
+
+/**
+ * Optional teardown on module unload.
+ */
+export async function onUnload() {
+  moduleLog.info("Core module unloaded");
+}
+
+export default {
+  name: moduleName,
+  commands,
+  events,
+  handleInteraction,
+  healthCheck,
+  onLoad,
+  onUnload,
+};

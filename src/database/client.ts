@@ -1,84 +1,96 @@
-import { createRequire } from 'node:module';
-import type { PrismaClient as PrismaClientType } from '@prisma/client';
-import { createModuleLogger } from '../utils/logger.js';
+/**
+ * NEXUS AI — Database Client (PostgreSQL + Prisma)
+ * Singleton PrismaClient with connection event logging and graceful disconnect.
+ */
 
-const require = createRequire(import.meta.url);
-const prismaPkg = require('@prisma/client');
-const logger = createModuleLogger('database');
+import { PrismaClient } from "@prisma/client";
+import { createModuleLogger } from "../utils/logger.js";
+import { config } from "../config/index.js";
 
-// Resilient constructor supporting CommonJS inside ESM via createRequire
-const PrismaClientConstructor =
-  prismaPkg.PrismaClient ?? prismaPkg.default?.PrismaClient ?? prismaPkg;
+const logger = createModuleLogger("database");
 
-let prisma: PrismaClientType;
+let prisma: PrismaClient;
 
 /**
- * Returns the singleton PrismaClient instance.
- * Creates a new instance if one does not exist.
+ * Returns the singleton PrismaClient instance, creating it on first use.
+ * In development, reuses the global instance to avoid hot-reload exhaustion.
  */
-function getPrismaClient(): PrismaClientType {
-  if (!prisma) {
-    prisma = new PrismaClientConstructor({
-      log: [
-        { level: 'error', emit: 'event' },
-        { level: 'warn', emit: 'event' },
-      ],
-    });
+function getPrismaClient(): PrismaClient {
+  if (prisma) return prisma;
 
-    prisma.$on('error' as never, (e: unknown) => {
-      logger.error({ error: e }, 'Prisma client error');
-    });
+  const client = new PrismaClient({
+    log:
+      config.isDev || config.isTest
+        ? [
+            { level: "query", emit: "event" },
+            { level: "error", emit: "event" },
+            { level: "warn", emit: "event" },
+          ]
+        : [{ level: "error", emit: "event" }, { level: "warn", emit: "event" }],
+  });
 
-    prisma.$on('warn' as never, (e: unknown) => {
-      logger.warn({ warning: e }, 'Prisma client warning');
+  client.$on("error", (e) => {
+    logger.error({ error: e }, "Prisma client error");
+  });
+
+  client.$on("warn", (e) => {
+    logger.warn({ warning: e }, "Prisma client warning");
+  });
+
+  if (config.isDev) {
+    client.$on("query", (e) => {
+      logger.debug({ query: e.query, params: e.params, duration: e.duration }, "DB query");
     });
   }
 
+  prisma = client;
   return prisma;
 }
 
+// Instantiate and export the singleton
 prisma = getPrismaClient();
 
-/**
- * Connects to the database and verifies the connection is alive.
- * Should be called during application startup.
- */
-async function connectDatabase(): Promise<void> {
-  try {
-    logger.info('Connecting to database...');
-    await prisma.$connect();
-    logger.info('Database connection established successfully');
+export { prisma };
 
-    // High-performance PRAGMAs for NVMe SSD & Dedicated RAM
-    try {
-      await prisma.$executeRawUnsafe('PRAGMA journal_mode = WAL;');
-      await prisma.$executeRawUnsafe('PRAGMA synchronous = NORMAL;');
-      await prisma.$executeRawUnsafe('PRAGMA cache_size = -64000;'); // 64MB dedicated cache
-      await prisma.$executeRawUnsafe('PRAGMA temp_store = MEMORY;');
-      await prisma.$executeRawUnsafe('PRAGMA mmap_size = 268435456;'); // 256MB memory mapped I/O
-      logger.info('SQLite performance PRAGMAs initialized (WAL mode, 64MB cache, memory temp store)');
-    } catch {
-      // Ignored if unsupported
-    }
+/**
+ * Connects to PostgreSQL and verifies the connection is alive.
+ * Called during application startup.
+ */
+export async function connectDatabase(): Promise<void> {
+  try {
+    logger.info("Connecting to PostgreSQL database...");
+    await prisma.$connect();
+    logger.info("Database connection established successfully");
   } catch (error) {
-    logger.fatal({ error }, 'Failed to connect to database');
+    logger.fatal({ error }, "Failed to connect to database");
     throw error;
   }
 }
 
 /**
  * Gracefully disconnects from the database.
- * Should be called during application shutdown.
+ * Called during application shutdown.
  */
-async function disconnectDatabase(): Promise<void> {
+export async function disconnectDatabase(): Promise<void> {
   try {
-    logger.info('Disconnecting from database...');
+    logger.info("Disconnecting from database...");
     await prisma.$disconnect();
-    logger.info('Database disconnected successfully');
+    logger.info("Database disconnected successfully");
   } catch (error) {
-    logger.error({ error }, 'Error disconnecting from database');
+    logger.error({ error }, "Error disconnecting from database");
     throw error;
   }
 }
 
-export { prisma, connectDatabase, disconnectDatabase };
+/**
+ * Returns a health check result for the database.
+ */
+export async function databaseHealth(): Promise<{ healthy: boolean; latencyMs?: number }> {
+  const start = Date.now();
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return { healthy: true, latencyMs: Date.now() - start };
+  } catch {
+    return { healthy: false };
+  }
+}

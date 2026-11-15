@@ -1,18 +1,10 @@
-export { prisma, connectDatabase, disconnectDatabase } from "./client.js";
+/**
+ * NEXUS AI — Database Barrel Export
+ * Exports the Prisma client, connection helpers, and all repositories.
+ */
 
-import { GuildRepository } from "./repositories/guild.repository.js";
-import { MemberRepository } from "./repositories/member.repository.js";
-import { AuditRepository } from "./repositories/audit.repository.js";
-import { ModuleConfigRepository } from "./repositories/module-config.repository.js";
-
-// Export repository classes
-export { GuildRepository } from "./repositories/guild.repository.js";
-export { MemberRepository } from "./repositories/member.repository.js";
-export { AuditRepository, type AuditCreateOptions, type AuditFindFilters } from "./repositories/audit.repository.js";
-export { ModuleConfigRepository } from "./repositories/module-config.repository.js";
-
-// Singleton repository instances
-export const guildRepository = new GuildRepository();
-export const memberRepository = new MemberRepository();
-export const auditRepository = new AuditRepository();
-export const moduleConfigRepository = new ModuleConfigRepository();
+export { prisma, connectDatabase, disconnectDatabase, databaseHealth } from "./client.js";
+export { guildRepository } from "../repositories/guildRepository.js";
+export { memberRepository } from "../repositories/memberRepository.js";
+export { moduleConfigRepository } from "../repositories/moduleConfigRepository.js";
+export { auditRepository } from "../repositories/auditRepository.js";

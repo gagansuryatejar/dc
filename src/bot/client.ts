@@ -1,227 +1,216 @@
 /**
- * Core bot client for NEXUS AI.
- * Includes resource monitoring, auto-recovery, and graceful shutdown
- * optimized for the HP All-in-One (Windows 10, 4GB RAM) and Android Termux.
+ * NEXUS AI — NexusClient
+ * Discord.js v14 client wrapper with full intents, automatic reconnection,
+ * graceful shutdown, and command/event dispatch.
  */
 
 import {
   Client,
   GatewayIntentBits,
   Partials,
+  Events,
   type ClientOptions,
 } from "discord.js";
-import os from "node:os";
 import { config } from "../config/index.js";
-import { connectDatabase, disconnectDatabase } from "../database/index.js";
-import { moduleLoader, ModuleLoader } from "../handlers/moduleLoader.js";
-import { commandHandler, CommandHandler } from "../handlers/commandHandler.js";
-import { interactionHandler, InteractionHandler } from "../handlers/interactionHandler.js";
 import { createModuleLogger } from "../utils/logger.js";
-import { formatBytes, formatDuration } from "../utils/helpers.js";
+import { BOT_NAME, BOT_VERSION } from "../utils/constants.js";
+import {
+  connectDatabase,
+  disconnectDatabase,
+  databaseHealth,
+  guildRepository,
+} from "../database/index.js";
+import { moduleLoader } from "../handlers/moduleLoader.js";
+import { setGatewaySendPayload } from "../modules/voice/services/connectionManager.js";
 
-const logger = createModuleLogger("bot:client");
-
-export interface ResourceStats {
-  rss: string;
-  heapUsed: string;
-  heapTotal: string;
-  external: string;
-  rawRssMb: number;
-  systemTotalRamMb: number;
-  systemFreeRamMb: number;
-  systemRamUsagePercent: number;
-  uptime: string;
-  uptimeSeconds: number;
-  ping: number;
-  guildsCount: number;
-  usersCount: number;
-  modulesLoaded: number;
-}
+const moduleLog = createModuleLogger("nexus-client");
 
 export class NexusClient extends Client {
-  public readonly moduleLoader: ModuleLoader = moduleLoader;
-  public readonly commandHandler: CommandHandler = commandHandler;
-  public readonly interactionHandler: InteractionHandler = interactionHandler;
-  private resourceMonitorTimer?: NodeJS.Timeout;
-  private isShuttingDown = false;
+  private readonly startTime = Date.now();
+  private shuttingDown = false;
 
-  constructor(options?: Partial<ClientOptions>) {
+  /** Persist all currently-cached guilds to PostgreSQL. */
+  async persistCachedGuilds(): Promise<void> {
+    for (const guild of this.guilds.cache.values()) {
+      try {
+        await guildRepository.findOrCreate({
+          id: guild.id,
+          name: guild.name,
+          ownerId: guild.ownerId,
+        });
+      } catch (err) {
+        moduleLog.error(
+          { err, guildId: guild.id },
+          "Failed to persist guild on startup",
+        );
+      }
+    }
+  }
+
+  constructor(options?: ClientOptions) {
     super({
       intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.GuildPresences,
-        GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMessages,
       ],
-      partials: [
-        Partials.User,
-        Partials.Message,
-        Partials.GuildMember,
-        Partials.Channel,
-        Partials.Reaction,
-      ],
-      // Close timeout for clean reconnection
-      closeTimeout: 5000,
+      partials: [Partials.User, Partials.Channel, Partials.GuildMember, Partials.Message],
       ...options,
     });
-
-    this.setupInternalListeners();
-  }
-
-  private setupInternalListeners(): void {
-    this.on("error", (error) => {
-      logger.error({ error }, "Discord client encountered an unhandled gateway error");
-    });
-
-    this.on("warn", (message) => {
-      logger.warn({ message }, "Discord client warning");
-    });
-
-    this.on("shardDisconnect", (event, shardId) => {
-      logger.warn({ event, shardId }, `Shard ${shardId} disconnected. Automatic reconnection enabled.`);
-    });
-
-    this.on("shardReconnecting", (shardId) => {
-      logger.info({ shardId }, `Shard ${shardId} reconnecting...`);
-    });
-
-    this.on("shardResume", (shardId, replayedEvents) => {
-      logger.info({ shardId, replayedEvents }, `Shard ${shardId} resumed connection successfully.`);
-    });
   }
 
   /**
-   * Initializes database, loads modules, registers commands/events, and logs in.
+   * Starts the Discord client, connects to the database, loads modules,
+   * and registers the global interaction handler.
    */
   async start(): Promise<void> {
-    try {
-      logger.info("Starting NEXUS AI Core Engine...");
-      logger.info(`Host Platform: ${os.platform()} (${os.release()}) | Total RAM: ${Math.round(os.totalmem() / 1024 / 1024)} MB`);
-
-      // 1. Connect to SQLite database via Prisma
-      await connectDatabase();
-
-      // 2. Bind client to module loader and attach events
-      this.moduleLoader.attachAllEvents(this);
-
-      // 3. Start Background Resource Monitor (critical for 4GB HP Windows host)
-      this.startResourceMonitor();
-
-      // 4. Authenticate with Discord
-      logger.info("Authenticating with Discord Gateway...");
-      await this.login(config.discord.token);
-      logger.info("Authentication handshake initiated.");
-    } catch (error) {
-      logger.fatal({ error }, "Fatal startup error encountered in NexusClient");
-      throw error;
+    // Validate required configuration before connecting
+    if (!config.discord.token) {
+      throw new Error("DISCORD_TOKEN is not configured");
     }
-  }
 
-  /**
-   * Periodic RAM and CPU watcher.
-   * On a 4GB RAM system, keeps the bot's heap and RSS well within bounds.
-   */
-  private startResourceMonitor(): void {
-    // Monitor every 60 seconds
-    this.resourceMonitorTimer = setInterval(() => {
-      const memory = process.memoryUsage();
-      const rssMb = Math.round(memory.rss / (1024 * 1024));
-      const heapUsedMb = Math.round(memory.heapUsed / (1024 * 1024));
+    // Connect to PostgreSQL
+    await connectDatabase();
 
-      // Warn if bot process exceeds 400MB on 4GB host
-      if (rssMb > 400) {
-        logger.warn(
-          { rssMb, heapUsedMb },
-          `High memory consumption detected: ${rssMb} MB RSS. Forcing garbage collection if available.`,
-        );
-        if (global.gc) {
-          try {
-            global.gc();
-            logger.info("Forced GC cycle completed.");
-          } catch (e) {
-            logger.debug({ error: e }, "GC failed or not exposed");
-          }
+    // Verify database health (non-fatal if unhealthy — bot can still run)
+    const dbHealth = await databaseHealth();
+    if (!dbHealth.healthy) {
+      moduleLog.warn(
+        { latencyMs: dbHealth.latencyMs },
+        "Database health check failed — continuing with degraded persistence",
+      );
+    } else {
+      moduleLog.info({ latencyMs: `${dbHealth.latencyMs}ms` }, "Database health check passed");
+    }
+
+    // Load all modules
+    await moduleLoader.loadAll();
+    moduleLog.info(`Loaded ${moduleLoader.size} module(s)`);
+
+    // Register the global interaction handler (slash commands, buttons, selects, modals)
+    this.on(Events.InteractionCreate, async (interaction) => {
+      if (this.shuttingDown) return;
+      await moduleLoader.handleInteraction(interaction);
+    });
+
+    // Core lifecycle events
+    this.on(Events.ClientReady, async () => {
+      this.handleReady();
+      await this.persistCachedGuilds();
+
+      // Set up voice adapter gateway sendPayload
+      setGatewaySendPayload((payload: any) => {
+        try {
+          (this.ws as any).broadcast(payload);
+          return true;
+        } catch {
+          return false;
         }
-      }
-    }, 60_000);
+      });
+      moduleLog.info("Voice gateway adapter configured");
+    });
+    this.on(Events.GuildCreate, (guild) => this.handleGuildCreate(guild));
+    this.on(Events.GuildDelete, (guild) => this.handleGuildDelete(guild));
+    this.on(Events.ShardReady, (id) =>
+      moduleLog.info({ shard: id }, `Discord shard ${id} ready`),
+    );
+    this.on(Events.ShardReconnecting, (id) =>
+      moduleLog.warn({ shard: id }, `Discord shard ${id} reconnecting`),
+    );
+    this.on(Events.ShardResume, (id) =>
+      moduleLog.info({ shard: id }, `Discord shard ${id} resumed`),
+    );
 
-    if (this.resourceMonitorTimer.unref) {
-      this.resourceMonitorTimer.unref();
-    }
+    // Error resilience
+    this.on(Events.Error, (error) => {
+      moduleLog.error({ error }, "Discord client error");
+    });
+    this.on(Events.Warn, (message) => {
+      moduleLog.warn({ message }, "Discord client warning");
+    });
+    this.on(Events.Debug, (message) => {
+      if (config.isDev) moduleLog.debug({ message }, "Discord debug");
+    });
+
+    // Connect to the Discord gateway
+    moduleLog.info("Connecting to Discord gateway...");
+    await this.login(config.discord.token);
+  }
+
+  private handleReady(): void {
+    if (!this.user || !this.application) return;
+    const uptime = Date.now() - this.startTime;
+    moduleLog.info(
+      {
+        user: `${this.user.username}#${this.user.discriminator ?? "0"}`,
+        id: this.user.id,
+        guilds: this.guilds.cache.size,
+        shards: this.shard?.count ?? 1,
+        uptimeMs: uptime,
+      },
+      `${BOT_NAME} v${BOT_VERSION} is ready on Discord`,
+    );
+    moduleLog.info(
+      `Logged in as ${this.user.tag} (${this.user.id}) | ${this.guilds.cache.size} guild(s)`,
+    );
+  }
+
+  private handleGuildCreate(guild: import("discord.js").Guild): void {
+    moduleLog.info({ guildId: guild.id, name: guild.name }, "Joined / added to a new guild");
+    void guildRepository.findOrCreate({
+      id: guild.id,
+      name: guild.name,
+      ownerId: guild.ownerId,
+    }).catch((err) =>
+      moduleLog.error({ err, guildId: guild.id }, "Failed to persist new guild"),
+    );
+  }
+
+  private handleGuildDelete(guild: import("discord.js").Guild): void {
+    moduleLog.info({ guildId: guild.id, name: guild.name }, "Removed from a guild");
   }
 
   /**
-   * Retrieve real-time performance and system resource metrics.
-   */
-  getResourceStats(): ResourceStats {
-    const mem = process.memoryUsage();
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = totalMem - freeMem;
-
-    let usersCount = 0;
-    for (const guild of this.guilds.cache.values()) {
-      usersCount += guild.memberCount || 0;
-    }
-
-    return {
-      rss: formatBytes(mem.rss),
-      heapUsed: formatBytes(mem.heapUsed),
-      heapTotal: formatBytes(mem.heapTotal),
-      external: formatBytes(mem.external),
-      rawRssMb: Math.round(mem.rss / (1024 * 1024)),
-      systemTotalRamMb: Math.round(totalMem / (1024 * 1024)),
-      systemFreeRamMb: Math.round(freeMem / (1024 * 1024)),
-      systemRamUsagePercent: Math.round((usedMem / totalMem) * 100),
-      uptime: formatDuration(this.uptime ?? 0),
-      uptimeSeconds: Math.floor((this.uptime ?? 0) / 1000),
-      ping: Math.round(this.ws.ping),
-      guildsCount: this.guilds.cache.size,
-      usersCount,
-      modulesLoaded: this.moduleLoader.size,
-    };
-  }
-
-  /**
-   * Graceful shutdown of bot, active modules, and database connection.
+   * Graceful shutdown: unload modules, disconnect database, destroy Discord client.
    */
   async shutdown(): Promise<void> {
-    if (this.isShuttingDown) return;
-    this.isShuttingDown = true;
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
 
-    logger.info("Initiating graceful shutdown sequence...");
+    moduleLog.info("Initiating controlled shutdown...");
 
-    // Stop background resource monitor
-    if (this.resourceMonitorTimer) {
-      clearInterval(this.resourceMonitorTimer);
-      this.resourceMonitorTimer = undefined;
+    try {
+      await moduleLoader.unloadAll();
+      moduleLog.info("All modules unloaded");
+    } catch (err) {
+      moduleLog.error({ err }, "Error unloading modules during shutdown");
     }
 
-    // Unload all active modules
-    const modules = this.moduleLoader.getAll();
-    for (const mod of modules) {
-      try {
-        await mod.onUnload();
-        logger.info(`Unloaded module: ${mod.name}`);
-      } catch (err) {
-        logger.error({ err, module: mod.name }, "Error unloading module during shutdown");
-      }
-    }
-
-    // Disconnect database
     try {
       await disconnectDatabase();
-      logger.info("Database disconnected successfully.");
     } catch (err) {
-      logger.error({ err }, "Error disconnecting database during shutdown");
+      moduleLog.error({ err }, "Error disconnecting database during shutdown");
     }
 
-    // Destroy Discord client connection
-    this.destroy();
-    logger.info("NEXUS AI client shutdown complete.");
+    try {
+      this.destroy();
+      moduleLog.info("Discord client destroyed");
+    } catch (err) {
+      moduleLog.error({ err }, "Error destroying Discord client");
+    }
+
+    moduleLog.info("Shutdown completed cleanly");
+  }
+
+  /** Get bot uptime in milliseconds. */
+  get uptimeMs(): number {
+    return Date.now() - this.startTime;
+  }
+
+  /** Whether the bot is currently shutting down. */
+  get isShuttingDown(): boolean {
+    return this.shuttingDown;
   }
 }

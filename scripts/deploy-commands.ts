@@ -1,66 +1,61 @@
 /**
- * Slash command deployment script for NEXUS AI.
- * Registers application commands with Discord REST API globally or to a specific dev guild.
+ * NEXUS AI — Slash Command Deployment Script
+ * Registers /nexus, /help, /admin commands with Discord.
  *
  * Usage:
- *   npx tsx scripts/deploy-commands.ts           (deploys to GUILD_ID from .env)
- *   npx tsx scripts/deploy-commands.ts --global  (deploys globally to Discord)
+ *   npx tsx scripts/deploy-commands.ts        # Register to dev guild (instant)
+ *   npx tsx scripts/deploy-commands.ts --global  # Register globally (up to 1 hour)
  */
 
-import "dotenv/config";
-import { REST, Routes } from "discord.js";
 import { config } from "../src/config/index.js";
-import { coreModule } from "../src/modules/core/index.js";
-import { engagementModule } from "../src/modules/engagement/index.js";
-import { voiceModule } from "../src/modules/voice/index.js";
-import { aiModule } from "../src/modules/ai/index.js";
-import { moderationModule } from "../src/modules/moderation/index.js";
-import { streamerModule } from "../src/modules/streamer/index.js";
-import { analyticsModule } from "../src/modules/analytics/index.js";
 import { logger } from "../src/utils/logger.js";
+import coreModule from "../src/modules/core/index.js";
+import { REST, Routes } from "discord.js";
 
-async function deploy(): Promise<void> {
-  const isGlobal = process.argv.includes("--global");
-  const token = config.discord.token;
-  const clientId = config.discord.clientId;
-  const guildId = config.discord.guildId;
+const isGlobal = process.argv.includes("--global");
 
-  if (!token || !clientId) {
-    logger.fatal("DISCORD_TOKEN and DISCORD_CLIENT_ID must be specified in .env");
+async function deploy() {
+  if (!config.discord.token) {
+    logger.fatal("DISCORD_TOKEN is not set in .env");
+    process.exit(1);
+  }
+  if (!config.discord.clientId) {
+    logger.fatal("DISCORD_CLIENT_ID is not set in .env");
     process.exit(1);
   }
 
-  // Collect all commands across loaded modules
-  const commands = [
-    ...coreModule.commands.map((c) => c.data.toJSON()),
-    ...engagementModule.commands.map((c) => c.data.toJSON()),
-    ...voiceModule.commands.map((c) => c.data.toJSON()),
-    ...aiModule.commands.map((c) => c.data.toJSON()),
-    ...moderationModule.commands.map((c) => c.data.toJSON()),
-    ...streamerModule.commands.map((c) => c.data.toJSON()),
-    ...analyticsModule.commands.map((c) => c.data.toJSON()),
-  ];
+  const rest = new REST({ version: "10" }).setToken(config.discord.token);
 
-  logger.info(`Loaded ${commands.length} application commands for deployment.`);
-
-  const rest = new REST({ version: "10" }).setToken(token);
+  // Build command payloads from loaded modules
+  const commands = coreModule.commands.map(
+    (cmd: { name: string; description: string; options?: unknown[] }) => ({
+      name: cmd.name,
+      description: cmd.description,
+      options: cmd.options ?? [],
+    }),
+  );
 
   try {
     if (isGlobal) {
-      logger.info(`Deploying ${commands.length} commands globally...`);
-      await rest.put(Routes.applicationCommands(clientId), { body: commands });
-      logger.info("Successfully registered global slash commands.");
+      await rest.put(Routes.applicationCommands(config.discord.clientId), {
+        body: commands,
+      });
+      logger.info(`Deployed ${commands.length} command(s) globally.`);
     } else {
-      if (!guildId) {
-        logger.fatal("GUILD_ID is not configured in .env. Specify GUILD_ID or pass --global.");
+      if (!config.discord.guildId) {
+        logger.fatal("GUILD_ID is not set. Use --global or set GUILD_ID in .env.");
         process.exit(1);
       }
-      logger.info(`Deploying ${commands.length} commands to guild ${guildId}...`);
-      await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
-      logger.info(`Successfully registered commands for guild ${guildId}.`);
+      await rest.put(
+        Routes.applicationGuildCommands(config.discord.clientId, config.discord.guildId),
+        { body: commands },
+      );
+      logger.info(
+        `Deployed ${commands.length} command(s) to dev guild ${config.discord.guildId}.`,
+      );
     }
-  } catch (error) {
-    logger.fatal({ error }, "Failed to deploy application commands to Discord API");
+  } catch (err) {
+    logger.error({ err }, "Failed to deploy slash commands");
     process.exit(1);
   }
 }

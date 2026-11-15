@@ -1,323 +1,297 @@
 /**
- * /nexus slash command group.
- * Provides system status, diagnostics, module management, and host resource telemetry.
+ * NEXUS AI — /nexus command group
+ * Diagnostic and module-control commands.
  */
 
 import {
-  SlashCommandBuilder,
   ChatInputCommandInteraction,
   EmbedBuilder,
-  version as djsVersion,
+  type CacheType,
 } from "discord.js";
-import os from "node:os";
-import { CORE, ALL_MODULE_NAMES, type ModuleName } from "../../../config/features.js";
-import { PermissionLevel, type NexusCommand } from "../../../types/index.js";
-import { Colors, createErrorEmbed, createSuccessEmbed } from "../../../utils/embeds.js";
-import { BOT_NAME, BOT_VERSION, EMOJIS, FOOTER_TEXT } from "../../../utils/constants.js";
+import { config } from "../../../config/index.js";
+import { BOT_NAME, BOT_VERSION, BOT_TAGLINE } from "../../../utils/constants.js";
 import { moduleLoader } from "../../../handlers/moduleLoader.js";
+import {
+  guildRepository,
+  databaseHealth,
+} from "../../../database/index.js";
 import { moduleConfigRepository } from "../../../database/index.js";
-import { powerGuardService } from "../services/power-guard.service.js";
-import type { NexusClient } from "../../../bot/client.js";
+import { adminLimiter } from "../../../security/rate-limiter.js";
 
-export const nexusCommand: NexusCommand = {
-  data: new SlashCommandBuilder()
-    .setName("nexus")
-    .setDescription("NEXUS AI system diagnostics, status, and module operations")
-    .addSubcommand((sub) =>
-      sub.setName("info").setDescription("Display overview of NEXUS AI system and platform"),
-    )
-    .addSubcommand((sub) =>
-      sub.setName("ping").setDescription("Check WebSocket heartbeat and API latency"),
-    )
-    .addSubcommand((sub) =>
-      sub.setName("status").setDescription("View live health and resource metrics of the host machine"),
-    )
-    .addSubcommand((sub) =>
-      sub.setName("modules").setDescription("List installed modules and their current guild status"),
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName("enable")
-        .setDescription("Enable a modular subsystem for this server (Admin only)")
-        .addStringOption((opt) =>
-          opt
-            .setName("module")
-            .setDescription("The module to enable")
-            .setRequired(true)
-            .addChoices(
-              ...ALL_MODULE_NAMES.filter((m) => m !== CORE).map((m) => ({
-                name: m,
-                value: m,
-              })),
-            ),
-        ),
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName("disable")
-        .setDescription("Disable a modular subsystem for this server (Admin only)")
-        .addStringOption((opt) =>
-          opt
-            .setName("module")
-            .setDescription("The module to disable")
-            .setRequired(true)
-            .addChoices(
-              ...ALL_MODULE_NAMES.filter((m) => m !== CORE).map((m) => ({
-                name: m,
-                value: m,
-              })),
-            ),
-        ),
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName("mobile")
-        .setDescription("View Android Termux deployment, battery status, and power guard telemetry"),
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName("ecomode")
-        .setDescription("Toggle mobile eco-mode power saving profile (Admin only)")
-        .addBooleanOption((opt) =>
-          opt
-            .setName("enabled")
-            .setDescription("Enable or disable power conservation mode")
-            .setRequired(true),
-        ),
-    ),
-
-  module: CORE,
-  permissions: PermissionLevel.MEMBER,
-  cooldownMs: 3000,
-
-  async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const sub = interaction.options.getSubcommand();
-    const client = interaction.client as NexusClient;
-
-    if (sub === "ping") {
-      const sent = await interaction.deferReply({ fetchReply: true });
-      const roundtrip = sent.createdTimestamp - interaction.createdTimestamp;
-      const wsPing = client.ws.ping;
-
-      const embed = new EmbedBuilder()
-        .setColor(Colors.PRIMARY)
-        .setTitle(`${EMOJIS.PING} Network Latency`)
-        .addFields(
-          { name: "WebSocket Heartbeat", value: `\`${wsPing}ms\``, inline: true },
-          { name: "Roundtrip Latency", value: `\`${roundtrip}ms\``, inline: true },
-        )
-        .setFooter({ text: FOOTER_TEXT })
-        .setTimestamp();
-
-      await interaction.editReply({ embeds: [embed] });
-      return;
-    }
-
-    if (sub === "info") {
-      const stats = client.getResourceStats ? client.getResourceStats() : null;
-      const embed = new EmbedBuilder()
-        .setColor(Colors.PRIMARY)
-        .setTitle(`⚡ ${BOT_NAME} v${BOT_VERSION}`)
-        .setDescription(
-          "Next Generation AI-Powered Discord Community Operating System.\nModular, secure, and resource-efficient architecture.",
-        )
-        .addFields(
-          { name: `${EMOJIS.SERVER} Servers`, value: `\`${stats?.guildsCount ?? client.guilds.cache.size}\``, inline: true },
-          { name: `${EMOJIS.STAR} Members`, value: `\`${stats?.usersCount ?? "Cached"}\``, inline: true },
-          { name: `${EMOJIS.GEAR} Active Modules`, value: `\`${moduleLoader.size}\``, inline: true },
-          { name: `${EMOJIS.CLOCK} Uptime`, value: `\`${stats?.uptime ?? "Active"}\``, inline: true },
-          { name: "Runtime", value: `\`Node.js ${process.version}\``, inline: true },
-          { name: "discord.js", value: `\`v${djsVersion}\``, inline: true },
-        )
-        .setFooter({ text: FOOTER_TEXT })
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
-      return;
-    }
-
-    if (sub === "status") {
-      const stats = client.getResourceStats();
-      const embed = new EmbedBuilder()
-        .setColor(Colors.PRIMARY)
-        .setTitle(`${EMOJIS.CHART} Host Diagnostics & Resource Telemetry`)
-        .setDescription(`Telemetry for production host: **${os.hostname()}** (${os.type()} ${os.arch()})`)
-        .addFields(
-          { name: "Process RSS (RAM)", value: `\`${stats.rss}\``, inline: true },
-          { name: "Process Heap Used", value: `\`${stats.heapUsed}\``, inline: true },
-          { name: "Heap Allocated", value: `\`${stats.heapTotal}\``, inline: true },
-          {
-            name: "Host Total RAM",
-            value: `\`${stats.systemTotalRamMb} MB\` (\`${stats.systemRamUsagePercent}%\` used)`,
-            inline: true,
-          },
-          { name: "Host Free RAM", value: `\`${stats.systemFreeRamMb} MB\``, inline: true },
-          { name: "Gateway Ping", value: `\`${stats.ping}ms\``, inline: true },
-          { name: "System Uptime", value: `\`${stats.uptime}\``, inline: true },
-          { name: "Database Engine", value: "`SQLite (WAL Mode)`", inline: true },
-          { name: "Architecture Target", value: "`HP All-in-One / Win10`", inline: true },
-        )
-        .setFooter({ text: FOOTER_TEXT })
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
-      return;
-    }
-
-    if (sub === "modules") {
-      const guildId = interaction.guildId;
-      if (!guildId) {
-        await interaction.reply({ embeds: [createErrorEmbed("Error", "Command must be used inside a guild.")], ephemeral: true });
-        return;
-      }
-
-      const all = moduleLoader.getAll();
-      const fields = await Promise.all(
-        all.map(async (mod) => {
-          let isGuildEnabled = true;
-          if (mod.name !== CORE) {
-            isGuildEnabled = await moduleConfigRepository.isEnabled(guildId, mod.name);
-          }
-          const statusEmoji = isGuildEnabled ? EMOJIS.ENABLED : EMOJIS.DISABLED;
-          return {
-            name: `${statusEmoji} ${mod.name} (v${mod.version})`,
-            value: `${mod.description}\n*Status: ${isGuildEnabled ? "Enabled" : "Disabled"}*`,
-            inline: false,
-          };
-        }),
-      );
-
-      const embed = new EmbedBuilder()
-        .setColor(Colors.PRIMARY)
-        .setTitle(`${EMOJIS.GEAR} NEXUS AI Subsystem Status`)
-        .setDescription(`Current module operational state for **${interaction.guild?.name}**:`)
-        .addFields(fields)
-        .setFooter({ text: FOOTER_TEXT })
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
-      return;
-    }
-
-    if (sub === "enable" || sub === "disable") {
-      const guildId = interaction.guildId;
-      if (!guildId) {
-        await interaction.reply({ embeds: [createErrorEmbed("Error", "Command must be used inside a guild.")], ephemeral: true });
-        return;
-      }
-
-      // Check admin permission
-      const member = interaction.member;
-      const isAdministrator =
-        member && "permissions" in member && typeof member.permissions !== "string"
-          ? member.permissions.has("Administrator")
-          : false;
-
-      if (!isAdministrator) {
-        await interaction.reply({
-          embeds: [createErrorEmbed("Permission Denied", "You must possess Administrator permissions to alter module configurations.")],
-          ephemeral: true,
-        });
-        return;
-      }
-
-      const targetMod = interaction.options.getString("module", true) as ModuleName;
-      if (targetMod === CORE) {
-        await interaction.reply({
-          embeds: [createErrorEmbed("Forbidden", "The core module is foundational and cannot be modified.")],
-          ephemeral: true,
-        });
-        return;
-      }
-
-      const enableAction = sub === "enable";
-      await moduleConfigRepository.setEnabled(guildId, targetMod, enableAction);
-
-      const successEmbed = createSuccessEmbed(
-        `Subsystem ${enableAction ? "Enabled" : "Disabled"}`,
-        `Successfully ${enableAction ? "enabled" : "disabled"} module **${targetMod}** for **${interaction.guild?.name}**.`,
-      );
-
-      await interaction.reply({ embeds: [successEmbed] });
-      return;
-    }
-
-    // ── Subcommand: mobile ──────────────────────────────────
-    if (sub === "mobile") {
-      const telemetry = powerGuardService.getMobileTelemetry();
-
-      const embed = new EmbedBuilder()
-        .setColor(telemetry.isEcoMode ? Colors.WARNING : Colors.PRIMARY)
-        .setTitle("📱 NEXUS AI Mobile & Termux Telemetry")
-        .setDescription(
-          `Deployment Profile: **${telemetry.deploymentMode.toUpperCase()}** (${telemetry.voiceProfile} voice)` +
-            `\nTarget Hardware: **OPPO Reno10 5G (8GB RAM)** / HP All-in-One`,
-        )
-        .addFields(
-          {
-            name: "🔋 Battery & Power Status",
-            value:
-              `• **Level:** ${telemetry.battery.percentage}%\n` +
-              `• **Plugged:** \`${telemetry.battery.plugged}\`\n` +
-              `• **State:** \`${telemetry.battery.status}\`\n` +
-              `• **Temperature:** ${telemetry.battery.temperature}°C`,
-            inline: true,
-          },
-          {
-            name: "⚡ Power Guard & Wake-Lock",
-            value:
-              `• **Eco Mode:** \`${telemetry.isEcoMode ? "ACTIVE" : "STANDBY"}\`\n` +
-              `• **Wake-Lock:** \`${telemetry.wakeLockActive ? "HELD (termux-wake-lock)" : "INACTIVE"}\`\n` +
-              `• **Status Reason:** _${telemetry.ecoModeReason}_`,
-            inline: true,
-          },
-          {
-            name: "🧠 Mobile Memory Budget",
-            value:
-              `• **Current RSS:** ${telemetry.currentRssMb} MB\n` +
-              `• **Target Limit:** $\\le$ ${telemetry.targetMemoryBudgetMb} MB\n` +
-              `• **Within Budget:** ${telemetry.withinBudget ? "✅ Compliant" : "⚠️ Exceeding"}`,
-            inline: false,
-          },
-        )
-        .setFooter({ text: FOOTER_TEXT })
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
-      return;
-    }
-
-    // ── Subcommand: ecomode ─────────────────────────────────
-    if (sub === "ecomode") {
-      const member = interaction.member;
-      const isAdministrator =
-        member && "permissions" in member && typeof member.permissions !== "string"
-          ? member.permissions.has("Administrator")
-          : false;
-
-      if (!isAdministrator) {
-        await interaction.reply({
-          embeds: [createErrorEmbed("Permission Denied", "Administrator permissions are required to toggle eco mode.")],
-          ephemeral: true,
-        });
-        return;
-      }
-
-      const enabled = interaction.options.getBoolean("enabled", true);
-      powerGuardService.setEcoMode(enabled, `Toggled by administrator @${interaction.user.username}`);
-
-      const embed = enabled
-        ? createSuccessEmbed(
-            "Eco Mode Activated",
-            "⚡ Mobile power-saving profile engaged. Background tasks throttled to extend battery life on mobile hosts.",
-          )
-        : createSuccessEmbed(
-            "Eco Mode Deactivated",
-            "✨ Standard performance profile restored.",
-          );
-
-      await interaction.reply({ embeds: [embed] });
-      return;
-    }
-  },
+export const command = {
+  name: "nexus",
+  description: "NEXUS AI diagnostics, info, and module control.",
+  options: [
+    {
+      name: "info",
+      type: 1, // SUB_COMMAND
+      description: "Show NEXUS AI version and system information.",
+    },
+    {
+      name: "ping",
+      type: 1,
+      description: "Check bot and Discord gateway latency.",
+    },
+    {
+      name: "status",
+      type: 1,
+      description: "Show bot uptime, database health, and module status.",
+    },
+    {
+      name: "modules",
+      type: 1,
+      description: "List loaded modules and their status.",
+    },
+    {
+      name: "enable",
+      type: 1,
+      description: "Enable a module for this server (Administrator).",
+      options: [
+        {
+          name: "module",
+          type: 3, // STRING
+          description: "Module name to enable.",
+          required: true,
+          choices: [
+            { name: "core", value: "core" },
+            { name: "engagement", value: "engagement" },
+            { name: "voice", value: "voice" },
+            { name: "heart", value: "heart" },
+            { name: "ai", value: "ai" },
+            { name: "moderation", value: "moderation" },
+            { name: "streamer", value: "streamer" },
+            { name: "analytics", value: "analytics" },
+          ],
+        },
+      ],
+    },
+    {
+      name: "disable",
+      type: 1,
+      description: "Disable a module for this server (Administrator).",
+      options: [
+        {
+          name: "module",
+          type: 3,
+          description: "Module name to disable.",
+          required: true,
+          choices: [
+            { name: "core", value: "core" },
+            { name: "engagement", value: "engagement" },
+            { name: "voice", value: "voice" },
+            { name: "heart", value: "heart" },
+            { name: "ai", value: "ai" },
+            { name: "moderation", value: "moderation" },
+            { name: "streamer", value: "streamer" },
+            { name: "analytics", value: "analytics" },
+          ],
+        },
+      ],
+    },
+  ],
 };
+
+/**
+ * Handle /nexus subcommands.
+ */
+export async function handle(
+  interaction: ChatInputCommandInteraction<CacheType>,
+): Promise<void> {
+  const subcommand = interaction.options.getSubcommand();
+  const guildId = interaction.guildId;
+  const userId = interaction.user.id;
+
+  // Rate limit administrative operations
+  if (["enable", "disable"].includes(subcommand)) {
+    const limited = adminLimiter.consume(`admin:${userId}`);
+    if (limited.limited) {
+      await interaction.reply({
+        content: `⏳ You're using admin commands too quickly. Try again in ${limited.resetInMs}ms.`,
+        flags: 64, // ephemeral
+      });
+      return;
+    }
+  }
+
+  switch (subcommand) {
+    case "info":
+      await handleInfo(interaction);
+      break;
+    case "ping":
+      await handlePing(interaction);
+      break;
+    case "status":
+      await handleStatus(interaction);
+      break;
+    case "modules":
+      await handleModules(interaction);
+      break;
+    case "enable":
+      await handleToggle(interaction, guildId, true);
+      break;
+    case "disable":
+      await handleToggle(interaction, guildId, false);
+      break;
+    default:
+      await interaction.reply({
+        content: "❌ Unknown /nexus subcommand.",
+        flags: 64,
+      });
+  }
+}
+
+/** /nexus info */
+async function handleInfo(interaction: ChatInputCommandInteraction<CacheType>) {
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle(`${BOT_NAME} v${BOT_VERSION}`)
+    .setDescription(BOT_TAGLINE)
+    .addFields(
+      {
+        name: "Environment",
+        value: config.nodeEnv.charAt(0).toUpperCase() + config.nodeEnv.slice(1),
+        inline: true,
+      },
+      {
+        name: "Database",
+        value: "PostgreSQL",
+        inline: true,
+      },
+      {
+        name: "Guilds",
+        value: interaction.client.guilds.cache.size.toString(),
+        inline: true,
+      },
+      {
+        name: "AI Provider",
+        value: config.ai.provider,
+        inline: true,
+      },
+      {
+        name: "Owner ID",
+        value: config.discord.ownerId || "Not set",
+        inline: true,
+      },
+      {
+        name: "Dev Guild",
+        value: config.discord.guildId || "Not set",
+        inline: true,
+      },
+    )
+    .setTimestamp()
+    .setFooter({ text: "NEXUS AI — Your Community. Your AI. Your Connection." });
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+/** /nexus ping */
+async function handlePing(interaction: ChatInputCommandInteraction<CacheType>) {
+  const sent = Date.now();
+  await interaction.deferReply({ flags: 64 });
+  const roundtrip = Date.now() - sent;
+  const gateway = interaction.client.ws.ping;
+
+  await interaction.editReply(
+    `🏓 Pong!\n• Roundtrip: ${roundtrip}ms\n• Gateway: ${gateway}ms`,
+  );
+}
+
+/** /nexus status */
+async function handleStatus(interaction: ChatInputCommandInteraction<CacheType>) {
+  const dbHealth = await databaseHealth();
+
+  const uptimeSeconds = Math.floor(process.uptime());
+
+  const embed = new EmbedBuilder()
+    .setColor(dbHealth.healthy ? 0x57f287 : 0xed4245)
+    .setTitle("🔧 NEXUS AI Status")
+    .addFields(
+      {
+        name: "Database (PostgreSQL)",
+        value: dbHealth.healthy
+          ? `✅ Healthy (${dbHealth.latencyMs}ms)`
+          : "❌ Unhealthy / unreachable",
+        inline: true,
+      },
+      {
+        name: "Uptime",
+        value: `${uptimeSeconds}s`,
+        inline: true,
+      },
+      {
+        name: "Modules Loaded",
+        value: moduleLoader.size.toString(),
+        inline: true,
+      },
+      {
+        name: "Node Environment",
+        value: config.nodeEnv,
+        inline: true,
+      },
+    )
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+/** /nexus modules */
+async function handleModules(interaction: ChatInputCommandInteraction<CacheType>) {
+  const modules = moduleLoader.list();
+  if (modules.length === 0) {
+    await interaction.reply({
+      content: "No modules currently loaded.",
+      flags: 64,
+    });
+    return;
+  }
+
+  const lines = modules.map((m) => `• **${m}**`).join("\n");
+  await interaction.reply({
+    content: `**Loaded Modules:**\n${lines}`,
+    flags: 64,
+  });
+}
+
+/** /nexus enable | /nexus disable */
+async function handleToggle(
+  interaction: ChatInputCommandInteraction<CacheType>,
+  guildId: string | null,
+  enable: boolean,
+) {
+  const moduleName = interaction.options.getString("module", true);
+
+  if (!guildId) {
+    await interaction.reply({
+      content: "❌ Module toggling is only available inside a server.",
+      flags: 64,
+    });
+    return;
+  }
+
+  // Administrator-only
+  const member = interaction.guild?.members.cache.get(interaction.user.id);
+  if (!member?.permissions.has("Administrator")) {
+    await interaction.reply({
+      content: "❌ You must be an Administrator to enable/disable modules.",
+      flags: 64,
+    });
+    return;
+  }
+
+  try {
+    await moduleConfigRepository.setEnabled(guildId, moduleName, enable);
+    await guildRepository.setFeatureFlag(guildId, moduleName, enable);
+
+    const action = enable ? "enabled" : "disabled";
+    await interaction.reply({
+      content: `✅ Module **${moduleName}** has been ${action} for this server.`,
+      flags: 64,
+    });
+  } catch (err) {
+    console.error(err);
+    await interaction.reply({
+      content: "❌ Failed to update module settings.",
+      flags: 64,
+    });
+  }
+}

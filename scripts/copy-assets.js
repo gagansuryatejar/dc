@@ -1,14 +1,8 @@
-import fs from "node:fs";
-import path from "node:path";
+/**
+ * NEXUS AI — Asset Copy Step (Build)
+ * Phase 1 has no static assets to copy. The Next.js dashboard (NEXUS CONTROL)
+ * is built and served separately starting in Phase 11.
+ */
 
-const srcDir = path.resolve(process.cwd(), "src/dashboard/public");
-const distDir = path.resolve(process.cwd(), "dist/dashboard/public");
-
-if (fs.existsSync(srcDir)) {
-  fs.mkdirSync(distDir, { recursive: true });
-  const files = fs.readdirSync(srcDir);
-  for (const file of files) {
-    fs.copyFileSync(path.join(srcDir, file), path.join(distDir, file));
-  }
-  console.log(`[Build] Copied ${files.length} static dashboard files to dist/dashboard/public/`);
-}
+// eslint-disable-next-line no-console
+console.log("[copy-assets] No static assets to copy in Phase 1.");

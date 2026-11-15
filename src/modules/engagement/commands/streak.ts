@@ -1,66 +1,66 @@
 /**
- * /streak slash command.
- * View current activity streak status, time remaining, and upcoming reward tiers.
+ * View current daily streak and streak rewards.
  */
 
 import {
   SlashCommandBuilder,
-  ChatInputCommandInteraction,
   EmbedBuilder,
+  ChatInputCommandInteraction,
 } from "discord.js";
-import { ENGAGEMENT } from "../../../config/features.js";
-import { PermissionLevel, type NexusCommand } from "../../../types/index.js";
-import { Colors } from "../../../utils/embeds.js";
-import { FOOTER_TEXT } from "../../../utils/constants.js";
 import { memberRepository } from "../../../database/index.js";
-import { streakService } from "../services/streak.service.js";
-import { formatDuration } from "../../../utils/helpers.js";
+import { calculateClaim } from "../services/streak.service.js";
+import { FOOTER_TEXT } from "../../../utils/constants.js";
 
-export const streakCommand: NexusCommand = {
-  data: new SlashCommandBuilder()
-    .setName("streak")
-    .setDescription("Inspect your current daily login streak and upcoming milestone rewards"),
+export const data = new SlashCommandBuilder()
+  .setName("streak")
+  .setDescription("View your daily streak status and rewards")
+  .addUserOption((option) =>
+    option.setName("user").setDescription("Member to view (defaults to you)"),
+  );
 
-  module: ENGAGEMENT,
-  permissions: PermissionLevel.MEMBER,
-  cooldownMs: 3000,
+export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const targetUser = interaction.options.getUser("user") || interaction.user;
 
-  async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const guildId = interaction.guildId;
-    if (!guildId) return;
+  const member = await memberRepository.findOrCreate({ guildId, userId: targetUser.id, username: targetUser.username });
 
-    const member = await memberRepository.findOrCreate(
-      guildId,
-      interaction.user.id,
-      interaction.user.username,
+  const lastDailyAt = member.lastDaily ?? null;
+  const result = calculateClaim(lastDailyAt, member.dailyStreak);
+
+  const embed = new EmbedBuilder()
+    .setTitle(`${targetUser.username}'s Daily Streak`)
+    .setThumbnail(targetUser.displayAvatarURL({ size: 128 }))
+    .setColor(result.success ? 0x00ff00 : 0xffa500)
+    .addFields(
+      { name: "🔥 Current Streak", value: `${member.dailyStreak} day${member.dailyStreak !== 1 ? "s" : ""}`, inline: true },
+      { name: "📅 Last Claim", value: member.lastDaily ? `<t:${Math.floor(new Date(member.lastDaily).getTime() / 1000)}:R>` : "Never", inline: true },
+      { name: "⏳ Status", value: result.success ? "✅ Ready to claim!" : "⏳ On cooldown", inline: true },
     );
 
-    const status = streakService.getStatus(member.lastDaily, member.dailyStreak);
+  if (!result.success) {
+    embed.addFields({ name: "Time Remaining", value: result.message, inline: false });
+  } else {
+    const nextRewardXp = 120 + Math.min((member.dailyStreak + 1) * 10, 500);
+    const nextRewardCoins = 50 + Math.min((member.dailyStreak + 1) * 5, 250);
+    embed.addFields({
+      name: "Next Reward",
+      value: `+${nextRewardXp} XP, +${nextRewardCoins} Coins (Streak ${member.dailyStreak + 1})`,
+      inline: false,
+    });
+  }
 
-    const statusText = status.isClaimable
-      ? "🟢 **Ready to claim right now!** Run `/daily` to continue your streak."
-      : `⏳ **Next claim available in:** ${formatDuration(status.timeUntilNextMs)}`;
+  // Streak milestones
+  const milestones = [3, 7, 14, 30, 60, 100];
+  const nextMilestone = milestones.find((m) => m > member.dailyStreak);
+  if (nextMilestone) {
+    embed.addFields({
+      name: "🎯 Next Milestone",
+      value: `${nextMilestone} days for a special badge!`,
+      inline: false,
+    });
+  }
 
-    const embed = new EmbedBuilder()
-      .setColor(Colors.PRIMARY)
-      .setTitle(`🔥 Activity Streak: ${member.dailyStreak} Days`)
-      .setDescription(
-        `Consistency powers community growth! Maintain your streak by using \`/daily\` once every 24-48 hours.\n\n` +
-          `**Current Status:**\n${statusText}`,
-      )
-      .addFields(
-        {
-          name: "Milestone Rewards Guide",
-          value:
-            "• **3 Days:** +160 XP / claim + 🔥 `Consistent Contributor` badge\n" +
-            "• **7 Days:** +240 XP / claim + 🏆 `Weekly Champion` badge\n" +
-            "• **30 Days:** +700 XP / claim (Max Bonus) + 💎 `Iron Will` badge",
-          inline: false,
-        },
-      )
-      .setFooter({ text: FOOTER_TEXT })
-      .setTimestamp();
+  embed.setFooter({ text: FOOTER_TEXT });
 
-    await interaction.reply({ embeds: [embed] });
-  },
-};
+  await interaction.reply({ embeds: [embed] });
+}

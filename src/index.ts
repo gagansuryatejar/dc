@@ -1,50 +1,55 @@
 /**
- * NEXUS AI — The Next Generation AI-Powered Discord Community Operating System.
- * Main application entry point.
+ * NEXUS AI — Main Application Entry Point
+ * Phase 1: Core bot, database, security, and command framework.
+ *
+ * Boot sequence:
+ *   1. Load environment config (Zod-validated)
+ *   2. Initialise structured logger
+ *   3. Create NexusClient (discord.js)
+ *   4. Load the Core module (/nexus, /help, /admin)
+ *   5. Start the Discord gateway connection
+ *   6. Handle graceful shutdown on SIGINT/SIGTERM
  */
 
 import "dotenv/config";
 import os from "node:os";
 import { NexusClient } from "./bot/client.js";
 import { moduleLoader } from "./handlers/moduleLoader.js";
-import { coreModule } from "./modules/core/index.js";
+import coreModule from "./modules/core/index.js";
 import { engagementModule } from "./modules/engagement/index.js";
 import { voiceModule } from "./modules/voice/index.js";
-import { aiModule } from "./modules/ai/index.js";
-import { moderationModule } from "./modules/moderation/index.js";
-import { streamerModule } from "./modules/streamer/index.js";
-import { analyticsModule } from "./modules/analytics/index.js";
 import { logger } from "./utils/logger.js";
-import { BOT_NAME, BOT_VERSION } from "./utils/constants.js";
+import { BOT_NAME, BOT_VERSION, BOT_TAGLINE } from "./utils/constants.js";
+import { config } from "./config/index.js";
 
 async function bootstrap(): Promise<void> {
-  // Console branding banner
-  logger.info(`
+  // ── Console branding banner ──────────────────────────────────────
+  // eslint-disable-next-line no-console
+  console.log(`
 ====================================================
  ███╗   ██╗███████╗██╗   ██╗██╗   ██╗███████╗    █████╗ ██╗
  ████╗  ██║██╔════╝╚██╗ ██╔╝██║   ██║██╔════╝   ██╔══██╗██║
  ██╔██╗ ██║█████╗   ╚████╔╝ ██║   ██║███████╗   ███████║██║
  ██║╚██╗██║██╔══╝    ╚██╔╝  ██║   ██║╚════██║   ██╔══██║██║
- ██║ ╚████║███████╗   ██║   ╚██████╔╝███████║██╗██║  ██║██║
- ╚═╝  ╚═══╝╚══════╝   ╚═╝    ╚═════╝ ╚══════╝╚═╝╚═╝  ╚═╝╚═╝
-              ${BOT_NAME} v${BOT_VERSION}
+ ██║ ╚████║███████╗   ██║   ╚████╔╝██║███████║██╗██║  ██║██║
+ ╚═╝  ╚═══╝╚══════╝   ╚═╝    ╚═════╝ ╚═════╝╚═╝  ╚═╝╚═╝
+             ${BOT_NAME} v${BOT_VERSION}
+        ${BOT_TAGLINE}
 ====================================================
 Host: ${os.hostname()} | OS: ${os.type()} ${os.release()} (${os.arch()})
-Node.js: ${process.version} | Free RAM: ${Math.round(os.freemem() / 1024 / 1024)}MB / ${Math.round(os.totalmem() / 1024 / 1024)}MB
+Node.js: ${process.version} | Env: ${config.nodeEnv}
+Free RAM: ${Math.round(os.freemem() / 1024 / 1024)}MB / ${Math.round(os.totalmem() / 1024 / 1024)}MB
 ====================================================`);
 
   const client = new NexusClient();
 
-  // Load core, engagement, voice, AI, and moderation modules
+  // ── Load modules ─────────────────────────────────────────────────
   await moduleLoader.load(coreModule);
   await moduleLoader.load(engagementModule);
   await moduleLoader.load(voiceModule);
-  await moduleLoader.load(aiModule);
-  await moduleLoader.load(moderationModule);
-  await moduleLoader.load(streamerModule);
-  await moduleLoader.load(analyticsModule);
+  logger.info(`Loaded ${moduleLoader.size} module(s): ${moduleLoader.list().join(", ")}`);
 
-  // Setup process termination handlers for graceful shutdown
+  // ── Process termination handlers (graceful shutdown) ─────────────
   const handleExit = async (signal: string) => {
     logger.info(`Received ${signal}. Initiating controlled shutdown...`);
     try {
@@ -66,9 +71,10 @@ Node.js: ${process.version} | Free RAM: ${Math.round(os.freemem() / 1024 / 1024)
 
   process.on("uncaughtException", (error: Error) => {
     logger.fatal({ error }, "Uncaught exception captured in root runtime");
+    process.exit(1);
   });
 
-  // Launch bot client
+  // ── Launch the bot ───────────────────────────────────────────────
   await client.start();
 }
 
