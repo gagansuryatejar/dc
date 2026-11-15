@@ -15,9 +15,9 @@ if (!fs.existsSync("./node_modules/discord-api-types")) {
   }
 }
 
-// If dist/index.js does not exist yet (e.g. fresh clone), build it automatically
-if (!fs.existsSync("./dist/index.js")) {
-  console.log("⚡ [NEXUS AI] dist/index.js not found. Running prisma db push and build...");
+// If dist/src/index.js does not exist yet (e.g. fresh clone), build it automatically
+if (!fs.existsSync("./dist/src/index.js")) {
+  console.log("⚡ [NEXUS AI] dist/src/index.js not found. Running prisma db push and build...");
   try {
     execSync("npx prisma db push --skip-generate", { stdio: "inherit" });
     execSync("npm run build", { stdio: "inherit" });
@@ -51,5 +51,5 @@ if (!fs.existsSync("./data/nexus.db")) {
 }
 
 // Load and start NEXUS AI
-console.log("🚀 [NEXUS AI] Starting engine from dist/index.js...");
-await import("./dist/index.js");
+console.log("🚀 [NEXUS AI] Starting engine from dist/src/index.js...");
+await import("./dist/src/index.js");
